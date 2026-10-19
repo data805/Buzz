@@ -1,0 +1,7 @@
+# Benchmark client. Python >= 3.11.
+httpx==0.28.1
+# Unit tests.
+pytest==9.1.1
+# Only for the test that checks our mu-law codec against audioop, which is
+# what pipecat uses (audioop was removed from the standard library in 3.13).
+audioop-lts==0.2.2; python_version >= "3.13"

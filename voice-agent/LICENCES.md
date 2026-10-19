@@ -24,6 +24,17 @@ Every component and model in the platform, with its licence. Status shows whethe
 | DCGM exporter | 4.8.4 | Apache-2.0 | Yes | Planned |
 | n8n | 2.43.6 | Sustainable Use Licence | Internal business use only | Planned |
 
+| node-exporter | 1.12.1 | Apache-2.0 | Yes | Planned |
+| Alertmanager | 0.34.1 | Apache-2.0 | Yes | Planned |
+| blackbox exporter | 0.28.0 | Apache-2.0 | Yes | Planned |
+| nginx | 1.30.5 | BSD-2-Clause | Yes | Planned |
+| MinIO client `mc` (built from source) | RELEASE.2025-08-13 | AGPL-3.0 | Internal use OK | Planned |
+| age (backup encryption) | 1.x | BSD-3-Clause | Yes | Planned |
+| FastAPI, Starlette, Pydantic, uvicorn (suppression service) | see `requirements.txt` | MIT / BSD-3-Clause | Yes | Planned |
+| prometheus_client | 0.26.0 | Apache-2.0 | Yes | Planned |
+| httpx (tools, benchmark) | 0.28.1 | BSD-3-Clause | Yes | Planned |
+| audioop-lts (benchmark tests only) | 0.2.2 | PSF-2.0 | Yes | Planned |
+
 ## Excluded
 
 | Item | Reason |

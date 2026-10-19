@@ -1,0 +1,16 @@
+{
+  "name": "Opt Out",
+  "category": "http_api",
+  "tool_uuid": "11111111-2222-3333-4444-555555555555",
+  "definition": {
+    "schema_version": 1,
+    "type": "http_api",
+    "config": {
+      "method": "POST",
+      "url": "http://suppression:8080/v1/opt-out",
+      "preset_parameters": [
+        {"name": "phone_number", "type": "string", "value_template": "{{initial_context.caller_number}}"}
+      ]
+    }
+  }
+}

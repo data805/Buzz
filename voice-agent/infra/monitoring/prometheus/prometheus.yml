@@ -1,0 +1,100 @@
+# Buzz Prometheus configuration (app host).
+#
+# Prometheus does not expand environment variables in this file, so every
+# host-dependent address lives in a file_sd target file under targets/,
+# generated from .env by ../render.sh. This file itself is static.
+#
+# Sources for paths and metric names are listed in ../README.md.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: buzz
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels: { host: app }
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+        labels: { host: app }
+
+  # Dograh api. Route: api/routes/main.py `@router.get("/metrics")`, mounted
+  # under API_PREFIX "/api/v1" (api/app.py). Needs ENABLE_PROMETHEUS_METRICS=true
+  # (else 404) and DOGRAH_DEVOPS_SECRET set (else 503); the header
+  # X-Dograh-Devops-Secret must match it (else 403). Metrics are per uvicorn
+  # worker: each worker listens on 8000+N and is scraped directly, as in
+  # Dograh's deploy/observability/prometheus/prometheus.yml.
+  - job_name: dograh
+    scrape_interval: 5s
+    metrics_path: /api/v1/metrics
+    http_headers:
+      X-Dograh-Devops-Secret:
+        files:
+          - /run/secrets/dograh_devops_secret
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/dograh.json"]
+
+  # vLLM OpenAI server: /metrics is not behind --api-key.
+  - job_name: vllm
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/vllm.json"]
+
+  # NVIDIA DCGM exporter on the inference host.
+  - job_name: dcgm
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/dcgm.json"]
+
+  # node-exporter on both hosts (label host=app|inference).
+  - job_name: node
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/node.json"]
+
+  # Asterisk res_prometheus: route "/<http.conf prefix>/<prometheus.conf uri>",
+  # default uri "metrics" and empty prefix, so /metrics on the ARI HTTP server.
+  # prometheus.conf must set auth_username=prometheus and the same password.
+  - job_name: asterisk
+    metrics_path: /metrics
+    basic_auth:
+      username: prometheus
+      password_file: /run/secrets/asterisk_metrics_password
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/asterisk.json"]
+
+  # Suppression service (integrations/suppression-service). /metrics is
+  # unauthenticated per INTERFACES.md. Scraped on the Docker network.
+  - job_name: suppression
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/suppression.json"]
+
+  # HTTP health probes through the blackbox exporter. Speaches has no
+  # /metrics endpoint (it only pushes OTLP), so /health is probed instead.
+  # Each target carries a `service` label.
+  - job_name: blackbox_http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/blackbox_http.json"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115

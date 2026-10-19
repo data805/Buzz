@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buzz.bongohive.co.zm/schemas/buzz-post-call.v1.json",
+  "title": "Buzz cleaned post-call record (n8n -> HubSpot / Google Sheets)",
+  "description": "Built by the n8n post-call flow from the Dograh webhook body. Typed (no stringified values), transcript and summary redacted by POST /v1/redact, opt-out confirmed against the suppression service. Nothing else from the call leaves the app server. No recording URLs.",
+  "type": "object",
+  "required": [
+    "schema",
+    "delivery_id",
+    "workflow_run_id",
+    "workflow_name",
+    "campaign_id",
+    "direction",
+    "contact_e164",
+    "hubspot_contact_id",
+    "call_started_at",
+    "duration_seconds",
+    "call_status",
+    "disposition",
+    "tags",
+    "summary",
+    "transcript",
+    "redactions",
+    "opt_out",
+    "consent"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "buzz.post-call.v1" },
+    "delivery_id": { "type": "string", "format": "uuid", "pattern": "^[0-9a-fA-F-]{36}$", "description": "X-Dograh-Delivery-Id header; idempotency key in HubSpot/Sheets" },
+    "workflow_run_id": { "type": "integer", "minimum": 1 },
+    "workflow_name": { "type": ["string", "null"], "maxLength": 200 },
+    "campaign_id": { "type": ["integer", "null"], "minimum": 1 },
+    "direction": { "enum": ["inbound", "outbound", "unknown"] },
+    "contact_e164": {
+      "type": ["string", "null"],
+      "pattern": "^\\+[1-9][0-9]{6,14}$",
+      "description": "The other party: called_number for outbound, caller_number for inbound, normalised by GET /v1/check. null if it did not normalise"
+    },
+    "hubspot_contact_id": { "type": ["string", "null"], "pattern": "^[0-9]+$" },
+    "call_started_at": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" },
+    "duration_seconds": { "type": "integer", "minimum": 0 },
+    "call_status": { "type": "string", "maxLength": 64 },
+    "disposition": {
+      "type": "string",
+      "description": "mapped_call_disposition if set, else call_disposition, else call_status. Dograh rule for user codes: letter, then letters/digits/_/-, max 64",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+    },
+    "tags": { "type": "array", "items": { "type": "string", "maxLength": 64 }, "maxItems": 50 },
+    "summary": { "type": "string", "maxLength": 5000, "description": "Redacted" },
+    "transcript": { "type": ["string", "null"], "maxLength": 200000, "description": "Redacted. null when Sheets-only or when the transcript was unavailable" },
+    "redactions": {
+      "type": "object",
+      "required": ["total"],
+      "additionalProperties": false,
+      "properties": {
+        "nrc": { "type": "integer", "minimum": 0 },
+        "card": { "type": "integer", "minimum": 0 },
+        "pin": { "type": "integer", "minimum": 0 },
+        "id": { "type": "integer", "minimum": 0 },
+        "phone": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "opt_out": { "type": "boolean", "description": "true if the contact is on the suppression list after this call (GET /v1/check reason=suppressed)" },
+    "consent": {
+      "type": "object",
+      "required": ["property", "value"],
+      "additionalProperties": false,
+      "description": "The HubSpot consent property to write. The property name is a placeholder until agreed with the HubSpot admin (verify)",
+      "properties": {
+        "property": { "const": "buzz_voice_call_consent" },
+        "value": { "enum": ["withdrawn", "unchanged"], "description": "withdrawn when opt_out is true; otherwise unchanged (the call never grants consent)" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "opt_out": { "const": true } } },
+      "then": { "properties": { "consent": { "properties": { "value": { "const": "withdrawn" } } } } }
+    }
+  ]
+}

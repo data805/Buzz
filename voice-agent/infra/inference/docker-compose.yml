@@ -1,0 +1,233 @@
+# Buzz inference host: vLLM (LLM) + Speaches (STT/TTS) + GPU and host exporters.
+#
+# Contract: docs/INTERFACES.md (ports, bind addresses, variable names).
+# Design:   docs/PLAN.md sections 2, 3 and 4.
+#
+# Start:    docker compose --env-file .env up -d
+# 16/48 GB: docker compose --env-file .env --env-file presets/gpu-16gb.env.preset up -d
+#           (later --env-file values override earlier ones; Compose >= 2.17)
+#
+# Start-up order matters. vLLM sizes its KV cache from a fraction of TOTAL GPU
+# memory, and its profiler asserts that no other process changes GPU memory
+# while it starts (vllm/v1/worker/gpu_worker.py, v0.31.0). Speaches only loads
+# a model on first use, so `speaches-warmup` loads both models (and runs one
+# request each) before vLLM is allowed to start:
+#   speaches (healthy) -> speaches-warmup (exit 0) -> vllm
+#
+# Runtime is offline: HF_HUB_OFFLINE=1 on both model servers. Models are put
+# into the named volumes by scripts/download-models.sh during maintenance.
+# Do NOT set Speaches PRELOAD_MODELS here: at startup it calls
+# huggingface_hub.list_models() (speaches executors/shared/registry.py,
+# download_model_by_id) and Speaches exits if that fails, which it will offline.
+
+name: buzz-inference
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+x-gpu: &gpu
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          device_ids: ["${GPU_DEVICE_ID:-0}"]
+          capabilities: [gpu]
+
+services:
+  # ---------------------------------------------------------------------------
+  # Speaches: OpenAI-compatible STT (faster-whisper) and TTS (Kokoro ONNX).
+  # Container port 8000 (UVICORN_PORT in the image), published as 8001.
+  # ---------------------------------------------------------------------------
+  speaches:
+    image: ${SPEACHES_IMAGE:-ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cuda-12.6.3}
+    restart: unless-stopped
+    environment:
+      # Every /v1 route needs "Authorization: Bearer <key>"; /health, /docs
+      # and /openapi.json stay public (speaches config.py, api_key).
+      API_KEY: ${SPEACHES_API_KEY:?set SPEACHES_API_KEY in .env}
+      ENABLE_UI: "false"
+      # -1 = never unload (config.py stt_model_ttl / tts_model_ttl).
+      STT_MODEL_TTL: "-1"
+      TTS_MODEL_TTL: "-1"
+      WHISPER__INFERENCE_DEVICE: cuda
+      WHISPER__COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      LOG_LEVEL: ${SPEACHES_LOG_LEVEL:-info}
+      HF_HUB_OFFLINE: "1"
+      # The image already sets DO_NOT_TRACK, HF_HUB_DISABLE_TELEMETRY and
+      # GRADIO_ANALYTICS_ENABLED=False; repeated here so the intent is visible.
+      DO_NOT_TRACK: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    ports:
+      - "${INFERENCE_LAN_IP:?set INFERENCE_LAN_IP in .env}:8001:8000"
+    volumes:
+      # Path from the Speaches Dockerfile (user ubuntu, UID 1000).
+      - hf-cache-speaches:/home/ubuntu/.cache/huggingface/hub
+    deploy: *gpu
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    logging: *default-logging
+    networks: [inference]
+
+  # ---------------------------------------------------------------------------
+  # One-shot: load STT and TTS into GPU memory and run one request each, so
+  # Speaches' memory is settled before vLLM profiles. Uses the Speaches image
+  # (curl and ffmpeg are installed there), so nothing extra is pulled.
+  # Re-run after restarting Speaches on its own:
+  #   docker compose up speaches-warmup
+  # ---------------------------------------------------------------------------
+  speaches-warmup:
+    image: ${SPEACHES_IMAGE:-ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cuda-12.6.3}
+    restart: "no"
+    depends_on:
+      speaches:
+        condition: service_healthy
+    environment:
+      SPEACHES_API_KEY: ${SPEACHES_API_KEY:?set SPEACHES_API_KEY in .env}
+      STT_MODEL: ${STT_MODEL:-deepdml/faster-whisper-large-v3-turbo-ct2}
+      TTS_MODEL: ${TTS_MODEL:-speaches-ai/Kokoro-82M-v1.0-ONNX}
+      TTS_VOICE: ${TTS_VOICE:-bf_emma}
+    entrypoint: ["/bin/bash", "-c"]
+    # $$ escapes Compose interpolation; the shell inside the container sees $.
+    command:
+      - |
+        set -euo pipefail
+        base=http://speaches:8000
+        auth="Authorization: Bearer $${SPEACHES_API_KEY}"
+        for m in "$${STT_MODEL}" "$${TTS_MODEL}"; do
+          # POST /api/ps/{model} loads a model (experimental route,
+          # routers/misc.py): 201 loaded, 409 already loaded.
+          code=$$(curl -s -o /tmp/out -w '%{http_code}' -X POST -H "$${auth}" "$${base}/api/ps/$${m}")
+          echo "load $${m}: HTTP $${code} $$(cat /tmp/out)"
+          case "$${code}" in 201|409) ;; *) exit 1 ;; esac
+        done
+        curl -sf -H "$${auth}" -H 'Content-Type: application/json' \
+          -d "{\"model\":\"$${TTS_MODEL}\",\"input\":\"Good morning, welcome to BongoHive.\",\"voice\":\"$${TTS_VOICE}\",\"response_format\":\"wav\"}" \
+          -o /tmp/warm.wav "$${base}/v1/audio/speech"
+        ffmpeg -loglevel error -y -i /tmp/warm.wav -ar 8000 -ac 1 -c:a pcm_s16le /tmp/warm8k.wav
+        curl -sf -H "$${auth}" -F "file=@/tmp/warm8k.wav;type=audio/wav" \
+          -F "model=$${STT_MODEL}" -F language=en "$${base}/v1/audio/transcriptions"
+        echo
+        curl -sf -H "$${auth}" "$${base}/api/ps"
+        echo
+        echo "warm-up done"
+    logging: *default-logging
+    networks: [inference]
+
+  # ---------------------------------------------------------------------------
+  # vLLM: OpenAI-compatible LLM server. Flags as PLAN section 3.
+  # Image tag v0.31.0 is built on CUDA 13.0 (docker/versions.json at the tag).
+  # Alternative for hosts whose driver only supports CUDA 12.x:
+  #   VLLM_IMAGE=vllm/vllm-openai:v0.31.0-cu129   (CUDA 12.9.1)
+  # Both tags exist on Docker Hub. With the R580 driver either works.
+  # ---------------------------------------------------------------------------
+  vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.31.0}
+    restart: unless-stopped
+    depends_on:
+      speaches:
+        condition: service_healthy
+      speaches-warmup:
+        condition: service_completed_successfully
+    # The image ENTRYPOINT is ["vllm", "serve"]; these are its arguments.
+    command:
+      - --model
+      - ${LLM_MODEL_ID:-Qwen/Qwen2.5-7B-Instruct-AWQ}
+      - --served-model-name
+      - ${LLM_MODEL_NAME:-buzz-llm}
+      - --quantization
+      - awq_marlin
+      - --max-model-len
+      - "${VLLM_MAX_MODEL_LEN:-8192}"
+      - --max-num-seqs
+      - "${VLLM_MAX_NUM_SEQS:-16}"
+      - --gpu-memory-utilization
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.50}"
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - hermes
+      # Already the default when the model supports it (arg_utils.py:
+      # enable_prefix_caching None -> model_config.is_prefix_caching_supported).
+      # Kept explicit so a future default change cannot silently drop it.
+      - --enable-prefix-caching
+      # /health and /metrics are not guarded by --api-key
+      # (vllm/entrypoints/serve/middleware/authenticate.py).
+      - --api-key
+      - ${VLLM_API_KEY:?set VLLM_API_KEY in .env}
+    environment:
+      HF_HUB_OFFLINE: "1"
+      # vLLM reports usage stats to vLLM's server unless told not to
+      # (docs/usage/usage_stats.md, envs.py at v0.31.0).
+      VLLM_NO_USAGE_STATS: "1"
+      DO_NOT_TRACK: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    ports:
+      - "${INFERENCE_LAN_IP:?set INFERENCE_LAN_IP in .env}:8000:8000"
+    volumes:
+      # The default vllm-openai image runs as root.
+      - hf-cache-vllm:/root/.cache/huggingface
+      # torch.compile and CUDA graph caches; speeds up restarts.
+      - vllm-cache:/root/.cache/vllm
+    # Shared memory for PyTorch workers. vLLM's Docker docs use --ipc=host or
+    # --shm-size; 2 GB is plenty for a single GPU (verify on the host).
+    shm_size: "2gb"
+    deploy: *gpu
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # First start compiles kernels and captures CUDA graphs.
+      start_period: 600s
+    logging: *default-logging
+    networks: [inference]
+
+  # ---------------------------------------------------------------------------
+  # Exporters, scraped by Prometheus on the app host.
+  # ---------------------------------------------------------------------------
+  dcgm-exporter:
+    image: ${DCGM_EXPORTER_IMAGE:-nvcr.io/nvidia/k8s/dcgm-exporter:4.8.4}
+    restart: unless-stopped
+    # SYS_ADMIN as in NVIDIA's own run example (tests/container/README.md);
+    # needed for profiling metrics such as DCGM_FI_PROF_*.
+    cap_add: [SYS_ADMIN]
+    ports:
+      - "${INFERENCE_LAN_IP:?set INFERENCE_LAN_IP in .env}:9400:9400"
+    deploy: *gpu
+    logging: *default-logging
+    networks: [inference]
+
+  node-exporter:
+    image: ${NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.12.1}
+    restart: unless-stopped
+    # Host namespaces as in the node_exporter README (v1.12.1). With host
+    # networking, bind to the LAN IP explicitly; otherwise it listens on all
+    # interfaces.
+    network_mode: host
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=${INFERENCE_LAN_IP:?set INFERENCE_LAN_IP in .env}:9100
+    volumes:
+      - /:/host:ro,rslave
+    logging: *default-logging
+
+networks:
+  inference:
+    name: buzz-inference
+    driver: bridge
+
+volumes:
+  # Fixed names so scripts/download-models.sh and backups can find them.
+  hf-cache-vllm:
+    name: buzz-hf-cache-vllm
+  hf-cache-speaches:
+    name: buzz-hf-cache-speaches
+  vllm-cache:
+    name: buzz-vllm-cache

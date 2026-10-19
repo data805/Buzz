@@ -1,0 +1,31 @@
+# Unit tests: promtool test rules prometheus/rules/tests/buzz.rules.test.yml
+rule_files:
+  - ../buzz.rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'buzz_backup_last_success_timestamp_seconds{host="app",job="node",instance="172.30.0.1:9100"}'
+        values: '0x1700'
+      - series: 'DCGM_FI_DEV_FB_USED{gpu="0",Hostname="gpu1",instance="i:9400",job="dcgm"}'
+        values: '23000x10'
+      - series: 'DCGM_FI_DEV_FB_FREE{gpu="0",Hostname="gpu1",instance="i:9400",job="dcgm"}'
+        values: '500x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GpuMemoryHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, component: gpu, gpu: "0", Hostname: gpu1, instance: "i:9400", job: dcgm }
+            exp_annotations:
+              summary: "GPU 0 on gpu1 memory above 95% (97.87%)"
+              description: "vLLM reserves a fixed share; growth beyond that is Speaches. OOM would stop STT/TTS."
+      # Last success at t=0: quiet at 25 h, firing at 27 h (26 h threshold + 10 m for).
+      - eval_time: 25h
+        alertname: BackupTooOld
+        exp_alerts: []
+      - eval_time: 27h
+        alertname: BackupTooOld
+        exp_alerts:
+          - exp_labels: { severity: critical, component: backup, host: app, job: node, instance: "172.30.0.1:9100" }
+            exp_annotations:
+              summary: "Last successful backup was 1d 3h 0m 0s ago"

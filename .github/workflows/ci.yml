@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: voice-agent
+
+jobs:
+  tests:
+    name: Offline test suites
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-ci.txt
+      - run: scripts/test-all.sh
+
+  static:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell scripts
+        run: |
+          find . -name '*.sh' -print0 | xargs -0 -n1 bash -n
+          find . -name '*.sh' -print0 | xargs -0 shellcheck -S warning
+
+      - name: Prometheus config and rules
+        run: |
+          docker run --rm -v "$PWD/infra/monitoring/prometheus:/p" -w /p \
+            --entrypoint promtool prom/prometheus:v3.15.0 check rules rules/buzz.rules.yml
+          docker run --rm -v "$PWD/infra/monitoring/prometheus/rules:/r" -w /r \
+            --entrypoint promtool prom/prometheus:v3.15.0 test rules tests/buzz.rules.test.yml
+
+      - name: Compose files render
+        run: |
+          docker network create --subnet 172.30.0.0/24 buzz-app
+          for d in infra/app infra/inference infra/asterisk infra/monitoring; do
+            echo "== $d"
+            docker compose --project-directory "$d" --env-file "$d/.env.example" \
+              -f "$d/docker-compose.yml" config --quiet
+          done

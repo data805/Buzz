@@ -1,0 +1,9 @@
+# Networks allowed to reach /voice-audio/ (call recordings) and /grafana/.
+# Copy to staff-cidrs.conf (git-ignored) and list one network per line as
+# "<cidr> 1;". Everything else gets 403 on those paths.
+# Used by the geo block in templates/buzz.conf.template.
+
+# Office LAN (example; replace with the real ranges)
+10.0.0.0/24 1;
+# Office VPN (example)
+# 10.8.0.0/24 1;

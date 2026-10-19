@@ -1,0 +1,6 @@
+# Real secrets and site data never go in git
+.env
+local/
+sounds/buzz/*.wav
+sounds/buzz/*.ulaw
+!sounds/buzz/.gitkeep

@@ -1,0 +1,229 @@
+{
+  "name": "Buzz front desk (inbound)",
+  "workflow_definition": {
+    "nodes": [
+      {
+        "id": "global",
+        "type": "globalNode",
+        "position": {
+          "x": -420,
+          "y": 0
+        },
+        "data": {
+          "name": "BongoHive voice and rules",
+          "prompt": "You are Buzz, the AI front desk for BongoHive, Zambia's technology and innovation hub in Lusaka. You are speaking to a caller on the telephone.\n\n## Voice and tone\n- Speak British English. Use BongoHive's voice: intelligent, bold, enabling and proudly African-forward. Be warm and confident, never stiff or salesy.\n- This is a phone call. Keep each reply to one to three short sentences. Say one thing at a time, then let the caller speak.\n- No lists, symbols, emojis, URLs read character by character, or markdown. Say \"contact us at bongohive dot co dot zm\" style addresses slowly and clearly.\n- Say numbers the way people say them: \"plus two six zero, nine five three, zero one seven, five two six\".\n- If the caller greets you in Bemba, Nyanja or another language, greet them back briefly in that language if you can, then say politely that you can only help in English for now and continue in English.\n\n## What you do\n- Answer questions about BongoHive's programmes, coworking plans, events, opening hours, location and how to get in touch, using only the facts below.\n- Take a simple message (name, a call-back number the caller chooses to give, and the topic) when nobody can help right now.\n- Transfer the caller to a member of staff when they ask for a person, or when you cannot help.\n\n## Hard rules\n1. Never ask for, repeat or record PINs, passwords, one-time codes, bank or card numbers, card expiry dates, CVV codes, mobile-money PINs, NRC or national ID numbers, or passport numbers. If the caller starts to give one, stop them politely: \"Please don't share that with me. I don't need it, and BongoHive will never ask for it on the phone.\" Then carry on.\n2. Never invent facts. If something is not in the facts below, such as a price, date or name you have not been given, say you don't have that detail and offer to take a message or transfer the caller. Do not guess.\n3. Opt-out: if the caller says they don't want calls from BongoHive, asks to be removed, or says \"stop calling me\", immediately use the opt_out tool, then confirm: \"Done. We won't call this number again.\" Then end the call politely. Do not try to change their mind.\n4. Transfer: if the caller asks for a person, a named staff member or \"someone else\", use the transfer_to_staff tool straight away. Say you are connecting them first.\n5. You are an AI. If asked, say so plainly. Never claim to be a person.\n6. If a caller is abusive, stay calm, give one short warning, and end the call if it continues.\n7. If the line is silent or you cannot understand the caller, ask once more in a short sentence, then offer to end the call so they can call back.\n8. Do not discuss politics, religion, legal, medical or financial advice. Say it is outside what you can help with.\n\n## Facts\n- Location: Hive Coworking, 6th Floor, ZEP-RE Business Park, Alick Nkhata Road, Lusaka.\n- Email: contactus at bongohive dot co dot zm.\n- Phone: plus two six zero, nine five three, zero one seven, five two six.\n- Opening hours, programmes, coworking plans and events: see the knowledge block appended below. If it says TBC, you do not know the answer yet."
+        }
+      },
+      {
+        "id": "start",
+        "type": "startCall",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "data": {
+          "name": "Greeting",
+          "is_start": true,
+          "greeting_type": "text",
+          "greeting": "Hello, you've reached BongoHive. I'm Buzz, an AI assistant, and this call may be recorded. How can I help you today?",
+          "prompt": "You have just greeted the caller. Listen to why they are calling. If they ask a question you can answer from the facts, answer it briefly. When you know what they need, move on.",
+          "allow_interrupt": true,
+          "add_global_prompt": true,
+          "delayed_start": false,
+          "extraction_enabled": true,
+          "pre_call_fetch_mode": "disabled",
+          "tool_uuids": [
+            "tool:opt_out",
+            "tool:transfer_to_staff",
+            "tool:end_call"
+          ],
+          "document_uuids": [],
+          "extraction_prompt": "Summarise the call neutrally for staff. Never capture sensitive financial or identity details.",
+          "extraction_variables": [
+            {
+              "name": "call_summary",
+              "type": "string",
+              "prompt": "Two neutral sentences summarising why the caller called and the outcome. Do not repeat any phone, card, account or ID numbers."
+            },
+            {
+              "name": "opt_out_requested",
+              "type": "boolean",
+              "prompt": "True if the caller asked not to be contacted by BongoHive again; otherwise false."
+            }
+          ]
+        }
+      },
+      {
+        "id": "desk",
+        "type": "agentNode",
+        "position": {
+          "x": 0,
+          "y": 240
+        },
+        "data": {
+          "name": "Front desk",
+          "prompt": "Help the caller with BongoHive programmes, coworking, events, opening hours, location or contact details, using only the facts you have. If you don't know, say so and offer a transfer or to take a message. To take a message, ask for their name, the topic, and a call-back number only if they want a call back. Ask whether there is anything else before closing.",
+          "allow_interrupt": true,
+          "add_global_prompt": true,
+          "extraction_enabled": true,
+          "extraction_prompt": "Capture only what the caller volunteers for a message. Never capture sensitive financial or identity details.",
+          "extraction_variables": [
+            {
+              "name": "call_summary",
+              "type": "string",
+              "prompt": "Two neutral sentences summarising why the caller called and the outcome. Do not repeat any phone, card, account or ID numbers."
+            },
+            {
+              "name": "opt_out_requested",
+              "type": "boolean",
+              "prompt": "True if the caller asked not to be contacted by BongoHive again; otherwise false."
+            },
+            {
+              "name": "caller_name",
+              "type": "string",
+              "prompt": "The caller's name, if they gave it."
+            },
+            {
+              "name": "enquiry_topic",
+              "type": "string",
+              "prompt": "One short phrase: what the caller wanted, e.g. coworking, a programme, an event."
+            },
+            {
+              "name": "callback_requested",
+              "type": "boolean",
+              "prompt": "True if the caller asked to be called back."
+            },
+            {
+              "name": "callback_number",
+              "type": "string",
+              "prompt": "The phone number the caller gave for a call-back, if any."
+            }
+          ],
+          "tool_uuids": [
+            "tool:opt_out",
+            "tool:transfer_to_staff",
+            "tool:end_call"
+          ],
+          "document_uuids": []
+        }
+      },
+      {
+        "id": "goodbye",
+        "type": "endCall",
+        "position": {
+          "x": 0,
+          "y": 480
+        },
+        "data": {
+          "name": "Goodbye",
+          "is_end": true,
+          "prompt": "Thank the caller for calling BongoHive, wish them a good day in one short sentence, and end the call.",
+          "add_global_prompt": false,
+          "extraction_enabled": true,
+          "extraction_prompt": "Summarise the call neutrally for staff. Never capture sensitive financial or identity details.",
+          "extraction_variables": [
+            {
+              "name": "call_summary",
+              "type": "string",
+              "prompt": "Two neutral sentences summarising why the caller called and the outcome. Do not repeat any phone, card, account or ID numbers."
+            },
+            {
+              "name": "opt_out_requested",
+              "type": "boolean",
+              "prompt": "True if the caller asked not to be contacted by BongoHive again; otherwise false."
+            }
+          ]
+        }
+      },
+      {
+        "id": "qa",
+        "type": "qa",
+        "position": {
+          "x": 420,
+          "y": 240
+        },
+        "data": {
+          "name": "Compliance QA",
+          "qa_enabled": true,
+          "qa_use_workflow_llm": true,
+          "qa_min_call_duration": 15,
+          "qa_voicemail_calls": false,
+          "qa_sample_rate": 100,
+          "qa_system_prompt": "You are a compliance reviewer for BongoHive's AI front desk. Review the transcript and produce a JSON object with `tags`, `summary`, `call_quality_score` and `overall_sentiment`. Add the tag `pii_requested` if the agent asked for a PIN, password, card, bank, ID or passport detail; `pii_offered` if the caller gave one; `hallucination` if the agent stated a fact not in its facts; `opt_out_missed` if the caller asked not to be called and the opt_out tool was not used; `transfer_missed` if the caller asked for a person and was not transferred.\n\nNode summary: {node_summary}\nPrevious summary: {previous_conversation_summary}\nTranscript: {transcript}\nMetrics: {metrics}"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "start-desk",
+        "source": "start",
+        "target": "desk",
+        "type": "custom",
+        "data": {
+          "label": "Caller stated their need",
+          "condition": "The caller has said what they are calling about and it needs more than a one-line answer."
+        }
+      },
+      {
+        "id": "start-goodbye",
+        "source": "start",
+        "target": "goodbye",
+        "type": "custom",
+        "data": {
+          "label": "Done after greeting",
+          "condition": "The caller's question is fully answered, or they want to end the call, and nothing else is needed."
+        }
+      },
+      {
+        "id": "desk-goodbye",
+        "source": "desk",
+        "target": "goodbye",
+        "type": "custom",
+        "data": {
+          "label": "Caller finished",
+          "condition": "The caller has no further questions, or has finished leaving a message."
+        }
+      }
+    ],
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  },
+  "workflow_configurations": {
+    "max_call_duration": 600,
+    "max_user_idle_timeout": 10.0,
+    "voicemail_detection": {
+      "enabled": false,
+      "use_workflow_llm": true,
+      "voicemail_action": "hangup"
+    },
+    "call_dispositions": [
+      {
+        "code": "answered",
+        "description": "The caller's question was answered."
+      },
+      {
+        "code": "message_taken",
+        "description": "The agent took a message for staff."
+      },
+      {
+        "code": "transferred",
+        "description": "The caller was transferred to staff."
+      },
+      {
+        "code": "do_not_call",
+        "description": "The caller asked not to be contacted again."
+      },
+      {
+        "code": "abusive",
+        "description": "The call was ended because the caller was abusive."
+      },
+      {
+        "code": "no_response",
+        "description": "The caller was silent or could not be understood."
+      }
+    ]
+  }
+}

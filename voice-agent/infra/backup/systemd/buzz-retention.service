@@ -1,0 +1,15 @@
+[Unit]
+Description=Buzz retention: expire recordings/transcripts and anonymise call data (PLAN section 7)
+Documentation=file:///opt/buzz/voice-agent/infra/backup/README.md
+Requires=docker.service
+After=docker.service buzz-backup.service
+
+[Service]
+Type=oneshot
+# Remove --apply to make the timer run a dry run only.
+ExecStart=/opt/buzz/voice-agent/infra/backup/retention.sh --apply
+Environment=BUZZ_BACKUP_ENV=/opt/buzz/voice-agent/infra/backup/.env
+TimeoutStartSec=2h
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true

@@ -1,0 +1,20 @@
+{
+  "schema": "buzz.post-call.v1",
+  "delivery_id": "6b0e7f3a-2d4c-4e8b-9a1f-5c6d7e8f9a0b",
+  "workflow_run_id": 1842,
+  "workflow_name": "Buzz outbound: Bootcamp follow-up",
+  "campaign_id": 12,
+  "direction": "outbound",
+  "contact_e164": "+260971234567",
+  "hubspot_contact_id": "51234",
+  "call_started_at": "2026-10-19T09:15:02.481236+00:00",
+  "duration_seconds": 143,
+  "call_status": "end_call",
+  "disposition": "callback_requested",
+  "tags": ["bootcamp", "callback"],
+  "summary": "Caller asked about the Data Science bootcamp fees (K1,500 per month) and gave PIN [REDACTED:PIN] by mistake. Wants a call back on Friday.",
+  "transcript": "[2026-10-19T09:15:04.010+00:00] assistant: Hello, this is the BongoHive AI assistant. This call is handled by an automated agent.\n[2026-10-19T09:15:09.220+00:00] user: Hi, my PIN is [REDACTED:PIN], sorry.\n",
+  "redactions": { "pin": 2, "total": 2 },
+  "opt_out": false,
+  "consent": { "property": "buzz_voice_call_consent", "value": "unchanged" }
+}

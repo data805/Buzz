@@ -1,0 +1,4 @@
+# Benchmark output and generated or private audio.
+results/
+fixtures/*.wav
+fixtures/manifest.json

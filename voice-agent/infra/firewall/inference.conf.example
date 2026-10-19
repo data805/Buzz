@@ -1,0 +1,36 @@
+# Buzz firewall allow-lists: INFERENCE host. Copy to /etc/buzz/firewall.conf
+# (root-owned, mode 600) and fill in. Sourced by docker-user-egress.sh as bash.
+# Ports follow docs/INTERFACES.md.
+
+ROLE=inference
+
+ADMIN_CIDRS="10.0.0.0/24"
+ADMIN_CIDRS6=""
+SSH_PORT=22
+
+# The inference host needs almost nothing outbound at runtime. Models are
+# downloaded during maintenance with --open-egress (README).
+# Only the app host (and DNS/NTP) as destinations.
+LAN_CIDRS="10.0.0.20/32"
+DNS_SERVERS="10.0.0.2"
+NTP_SERVERS=""
+DOCKER_SUBNETS="172.17.0.0/16 172.31.0.0/24"
+
+SIP_CARRIER_IPS=""
+
+# vLLM 8000, Speaches 8001 and DCGM exporter 9400 are Docker-published on the
+# LAN IP: only the app host (Dograh api and Prometheus) may connect.
+# Replace 10.0.0.20 with APP_LAN_IP.
+PUBLISHED_ALLOW="tcp:8000:10.0.0.20/32 tcp:8001:10.0.0.20/32 tcp:9400:10.0.0.20/32"
+
+# node-exporter on the host network, from Prometheus on the app host.
+HOST_INPUT_ALLOW="tcp:9100:10.0.0.20/32"
+INPUT_POLICY=drop
+
+EGRESS_ALLOW=""
+HOST_EGRESS_POLICY=deny
+HOST_EGRESS_ALLOW=""
+ALLOW_LETSENCRYPT=no
+
+IPV6_POLICY=drop
+LOG_DROPS=yes

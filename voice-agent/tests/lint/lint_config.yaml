@@ -1,0 +1,34 @@
+# Configuration for tests/lint/lint_workflows.py.
+# ${VAR} is expanded from the environment; an unset variable is dropped.
+# Host entries are matched with shell-style wildcards (fnmatch).
+
+# Hosts that HTTP tools, transfer resolvers, MCP servers, webhook nodes and
+# pre-call fetch may call. Containers on the buzz-app network reach each other
+# by service name, so these are Docker DNS names, not 127.0.0.1.
+allowed_tool_hosts:
+  - suppression          # integrations/suppression-service on buzz-app: http://suppression:8080
+  - n8n                  # self-hosted n8n, if on buzz-app (PLAN Q6)
+  - ${N8N_HOST}          # or wherever n8n lives on the LAN
+
+# Hosts a model provider base_url / endpoint may point at.
+allowed_model_hosts:
+  - ${INFERENCE_HOST}
+
+# Providers that need no explicit base_url to be considered local.
+local_providers:
+  - speaches
+
+# UUIDs of our provider connections and named configurations (from
+# tools/dograh/configure_providers.py on each instance). Leave empty to get a
+# warning instead of an error for workflow-level model overrides.
+allowed_connection_uuids: []
+
+# LLM function name of the opt-out tool every conversational node must carry.
+required_tool_function: opt_out
+
+# Extraction variables every agent must define (name: type). The post-call
+# webhook template integrations/webhook-schemas/dograh-payload-template.json
+# reads {{gathered_context.call_summary}} and {{gathered_context.opt_out_requested}}.
+required_extraction_variables:
+  call_summary: string
+  opt_out_requested: boolean

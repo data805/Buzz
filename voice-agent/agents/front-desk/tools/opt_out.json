@@ -1,0 +1,40 @@
+{
+  "name": "opt_out",
+  "description": "Add the caller's number to BongoHive's do-not-call list. Call this as soon as the caller says they do not want calls from BongoHive, asks to be removed, or says stop calling. Takes no arguments. After it returns, confirm and end the call.",
+  "category": "http_api",
+  "icon": "ban",
+  "icon_color": "#DC2626",
+  "credential_name": "suppression-api-key",
+  "definition": {
+    "schema_version": 1,
+    "type": "http_api",
+    "config": {
+      "method": "POST",
+      "url": "http://suppression:8080/v1/opt-out",
+      "credential_uuid": null,
+      "parameters": [],
+      "preset_parameters": [
+        {
+          "name": "phone_number",
+          "type": "string",
+          "value_template": "{{initial_context.caller_number}}",
+          "required": true
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "value_template": "voice_agent:front-desk",
+          "required": true
+        },
+        {
+          "name": "call_id",
+          "type": "string",
+          "value_template": "{{gathered_context.call_id}}",
+          "required": false
+        }
+      ],
+      "timeout_ms": 5000,
+      "body_format": "json"
+    }
+  }
+}

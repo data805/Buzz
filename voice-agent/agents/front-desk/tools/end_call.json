@@ -1,0 +1,16 @@
+{
+  "name": "end_call",
+  "description": "End the call. Use after an opt-out has been confirmed, after a persistent abusive caller has been warned once, or when the caller has finished.",
+  "category": "end_call",
+  "icon": "phone-off",
+  "icon_color": "#6B7280",
+  "definition": {
+    "schema_version": 1,
+    "type": "end_call",
+    "config": {
+      "messageType": "none",
+      "endCallReason": true,
+      "endCallReasonDescription": "One of: finished, opted_out, abusive, silence, wrong_number."
+    }
+  }
+}

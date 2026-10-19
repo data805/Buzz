@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Run every offline test suite. Each suite runs from its own folder because
+# several of them use a top-level "tests" package.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+suites=(
+  integrations/suppression-service
+  integrations/redaction
+  integrations/webhook-schemas
+  tools/dograh
+  tests/lint
+  tests/scenarios
+  tests/egress
+  tests/bench
+  infra/asterisk
+)
+
+failed=()
+for s in "${suites[@]}"; do
+  echo "== ${s}"
+  if ! (cd "${s}" && python -m pytest -q -p no:cacheprovider); then
+    failed+=("${s}")
+  fi
+done
+
+echo "== workflow lint"
+python tests/lint/lint_workflows.py --strict || failed+=("workflow lint")
+
+echo "== scenario files"
+python tests/scenarios/validate_scenarios.py tests/scenarios/*.yaml || failed+=("scenario files")
+
+if ((${#failed[@]})); then
+  echo "FAILED: ${failed[*]}" >&2
+  exit 1
+fi
+echo "All suites passed."

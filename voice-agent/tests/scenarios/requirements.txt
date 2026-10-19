@@ -1,0 +1,3 @@
+PyYAML>=6
+pytest>=8
+# runner (not yet written): httpx>=0.27

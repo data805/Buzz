@@ -1,0 +1,19 @@
+{
+  "name": "transfer_to_staff",
+  "description": "Transfer the caller to a member of BongoHive staff. Use when the caller asks for a person or when you cannot help.",
+  "category": "transfer_call",
+  "icon": "phone-forwarded",
+  "icon_color": "#2563EB",
+  "definition": {
+    "schema_version": 1,
+    "type": "transfer_call",
+    "config": {
+      "destination_source": "static",
+      "destination": "Local/2000@buzz-transfer/n",
+      "messageType": "custom",
+      "customMessage": "Please hold for a moment while I connect you to a member of the BongoHive team.",
+      "timeout": 60,
+      "call_disposition": "transferred"
+    }
+  }
+}

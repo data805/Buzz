@@ -1,0 +1,125 @@
+{
+  "name": "Minimal valid fixture",
+  "workflow_definition": {
+    "nodes": [
+      {
+        "id": "g",
+        "type": "globalNode",
+        "position": {
+          "x": -200,
+          "y": 0
+        },
+        "data": {
+          "name": "Global",
+          "prompt": "Never take PINs. If the caller asks to opt out, use opt_out."
+        }
+      },
+      {
+        "id": "s",
+        "type": "startCall",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "data": {
+          "name": "Start",
+          "prompt": "Ask how you can help.",
+          "greeting_type": "text",
+          "greeting": "Hello, I'm an AI assistant for BongoHive.",
+          "tool_uuids": [
+            "11111111-2222-3333-4444-555555555555"
+          ]
+        }
+      },
+      {
+        "id": "a",
+        "type": "agentNode",
+        "position": {
+          "x": 0,
+          "y": 200
+        },
+        "data": {
+          "name": "Agent",
+          "prompt": "Help the caller.",
+          "tool_uuids": [
+            "tool:opt_out"
+          ],
+          "extraction_enabled": true,
+          "extraction_variables": [
+            {
+              "name": "enquiry_topic",
+              "type": "string",
+              "prompt": "What they asked about"
+            },
+            {
+              "name": "call_summary",
+              "type": "string",
+              "prompt": "Short neutral summary"
+            },
+            {
+              "name": "opt_out_requested",
+              "type": "boolean",
+              "prompt": "Asked not to be called"
+            }
+          ]
+        }
+      },
+      {
+        "id": "e",
+        "type": "endCall",
+        "position": {
+          "x": 0,
+          "y": 400
+        },
+        "data": {
+          "name": "End",
+          "prompt": "Say goodbye."
+        }
+      },
+      {
+        "id": "q",
+        "type": "qa",
+        "position": {
+          "x": 300,
+          "y": 200
+        },
+        "data": {
+          "name": "QA",
+          "qa_enabled": true,
+          "qa_use_workflow_llm": true
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s-a",
+        "source": "s",
+        "target": "a",
+        "data": {
+          "label": "need",
+          "condition": "caller states need"
+        }
+      },
+      {
+        "id": "a-e",
+        "source": "a",
+        "target": "e",
+        "data": {
+          "label": "done",
+          "condition": "caller is done"
+        }
+      }
+    ],
+    "viewport": {
+      "x": 0,
+      "y": 0,
+      "zoom": 1
+    }
+  },
+  "workflow_configurations": {
+    "voicemail_detection": {
+      "enabled": true,
+      "use_workflow_llm": true
+    }
+  }
+}

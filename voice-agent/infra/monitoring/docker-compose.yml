@@ -1,0 +1,164 @@
+# Buzz monitoring stack (app host).
+#
+# Prometheus, Alertmanager, Grafana, blackbox exporter and node-exporter.
+# Contract: docs/INTERFACES.md. Every published port is bound to 127.0.0.1;
+# nginx (on buzz-app) reaches Grafana as grafana:3000 and serves it at /grafana/.
+#
+# Before the first `docker compose up -d`, run `sudo ./render.sh` (see README.md):
+# it turns .env into the Prometheus file_sd target files and the secret files.
+
+name: buzz-monitoring
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-30d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-20GB}
+      - --web.listen-address=0.0.0.0:9090
+      - --web.external-url=http://127.0.0.1:9090/
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/targets:/etc/prometheus/targets:ro
+      - prometheus-data:/prometheus
+    secrets:
+      - dograh_devops_secret
+      - asterisk_metrics_password
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - buzz-app
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=0.0.0.0:9093
+      - --web.external-url=http://127.0.0.1:9093/
+      # Single instance: no gossip mesh, no listening cluster port.
+      - --cluster.listen-address=
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    secrets:
+      - alertmanager_webhook_url
+    ports:
+      - "127.0.0.1:9093:9093"
+    networks:
+      - buzz-app
+    logging: *logging
+
+  blackbox:
+    # v0.29.0 (7 Oct 2026) is under two weeks old; stay on v0.28.0 for now.
+    image: prom/blackbox-exporter:v0.28.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    networks:
+      - buzz-app
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:13.2.4
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      # Served by nginx at https://${PUBLIC_HOST}/grafana/
+      GF_SERVER_HTTP_ADDR: "0.0.0.0"
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_SERVER_DOMAIN: "${PUBLIC_HOST:?set PUBLIC_HOST in .env}"
+      GF_SERVER_ROOT_URL: "https://${PUBLIC_HOST}/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SERVER_ENFORCE_DOMAIN: "false"
+      # Authentication
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}"
+      GF_SECURITY_SECRET_KEY: "${GRAFANA_SECRET_KEY:?set GRAFANA_SECRET_KEY in .env}"
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: "strict"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      # No outbound calls (keys from conf/defaults.ini at v13.2.4).
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_ANALYTICS_FEEDBACK_LINKS_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+      GF_PUBLIC_DASHBOARDS_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      GF_PLUGINS_PLUGIN_ADMIN_ENABLED: "false"
+      GF_PLUGINS_PUBLIC_KEY_RETRIEVAL_DISABLED: "true"
+      # Grafana's own alerting is unused: Prometheus + Alertmanager do it.
+      GF_UNIFIED_ALERTING_ENABLED: "false"
+      GF_LOG_MODE: "console"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - buzz-app
+    logging: *logging
+
+  node-exporter:
+    # Host network so that it reports the host's real interfaces. It listens on
+    # the buzz-app gateway (172.30.0.1), which Prometheus reaches from the bridge
+    # and the LAN cannot. Like Asterisk, it needs the buzz-app network to exist
+    # first; restart: unless-stopped retries until the address is bound.
+    image: prom/node-exporter:v1.12.1
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=${APP_NODE_EXPORTER_LISTEN:-172.30.0.1:9100}
+      - --collector.textfile.directory=/host/var/lib/node_exporter/textfile_collector
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/docker/.+|var/lib/containerd/.+)($|/)
+    volumes:
+      - /:/host:ro,rslave
+    logging: *logging
+
+networks:
+  buzz-app:
+    external: true
+
+volumes:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+
+secrets:
+  dograh_devops_secret:
+    file: ./secrets/dograh_devops_secret
+  asterisk_metrics_password:
+    file: ./secrets/asterisk_metrics_password
+  alertmanager_webhook_url:
+    file: ./secrets/alertmanager_webhook_url

@@ -1,0 +1,18 @@
+# Re-apply the Buzz firewall at boot and whenever Docker (re)starts.
+# Install:
+#   install -m 755 infra/firewall/docker-user-egress.sh /usr/local/sbin/buzz-firewall
+#   install -m 644 infra/firewall/buzz-firewall.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now buzz-firewall
+[Unit]
+Description=Buzz default-deny firewall (DOCKER-USER egress and host allow-lists)
+After=docker.service network-online.target
+Wants=network-online.target
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/buzz-firewall --config /etc/buzz/firewall.conf --apply
+
+[Install]
+WantedBy=multi-user.target docker.service

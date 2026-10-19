@@ -1,0 +1,20 @@
+{
+  "schema": "buzz.dograh-webhook.v1",
+  "workflow_run_id": "{{workflow_run_id}}",
+  "workflow_id": "{{workflow_id}}",
+  "workflow_name": "{{workflow_name}}",
+  "campaign_id": "{{campaign_id}}",
+  "call_time": "{{call_time}}",
+  "direction": "{{initial_context.direction}}",
+  "caller_number": "{{initial_context.caller_number}}",
+  "called_number": "{{initial_context.called_number}}",
+  "hubspot_contact_id": "{{initial_context.hubspot_contact_id}}",
+  "call_status": "{{gathered_context.call_status}}",
+  "call_disposition": "{{gathered_context.call_disposition}}",
+  "mapped_call_disposition": "{{gathered_context.mapped_call_disposition}}",
+  "call_tags": "{{gathered_context.call_tags}}",
+  "summary": "{{gathered_context.call_summary}}",
+  "opt_out_requested": "{{gathered_context.opt_out_requested}}",
+  "duration_seconds": "{{cost_info.call_duration_seconds}}",
+  "transcript_url": "{{transcript_url}}"
+}

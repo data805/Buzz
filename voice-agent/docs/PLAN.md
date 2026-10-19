@@ -1,8 +1,8 @@
 # Buzz voice-agent platform: Phase 0 plan
 
-Status: **draft for approval**. Date: 15 October 2026. Owner: BongoHive AI Lab, Data & AI team.
+Status: **draft for approval**; base code built 19 October 2026 (see section 12). Date: 15 October 2026. Owner: BongoHive AI Lab, Data & AI team.
 
-This plan comes from reading the Dograh source at `main` `3cb5e913` (tag `dograh-v1.49.0`, 12 Oct 2026), its docs, and the upstream release pages for vLLM, Speaches, Asterisk, NVIDIA and the monitoring stack. Every key below is quoted from a doc page or source file. Items marked **(verify)** have not been confirmed and will be tested before we rely on them.
+This plan comes from reading the Dograh source at tag `dograh-v1.49.0` (commit `b86e8ed`, 12 Oct 2026), its docs, and the upstream release pages for vLLM, Speaches, Asterisk, NVIDIA and the monitoring stack. Every key below is quoted from a doc page or source file. Items marked **(verify)** have not been confirmed and will be tested before we rely on them.
 
 The servers have **not** been inspected yet because their details are still placeholders in the brief (see section 9). Section 4 therefore gives GPU budgets for the likely card sizes.
 
@@ -16,14 +16,14 @@ Dograh is a good fit, but in its default form it is **not** fully local. Five fi
 |---|---|---|---|
 | F1 | Knowledge-base ingestion always sends documents to Dograh cloud: `POST {MPS_API_URL}/api/v1/document/process` in `api/tasks/knowledge_base_processing.py`. This applies to both "Full Document" and "Chunked Search". Embeddings are limited to openai, openrouter, azure and dograh, with a fixed `Vector(1536)` column. | **Breaks it.** The documents themselves are public, but the process fails without internet and creates a cloud dependency. | **Do not use the Dograh knowledge base in v1.** The front-desk knowledge (programmes, plans, events, hours) is small, so put it straight into the Global node prompt as cleaned Markdown, kept under about 3k tokens. vLLM prefix caching keeps that cheap. If it grows, add a small **local KB service** (pgvector plus a local embedding model) called as a Dograh HTTP tool. See D2. |
 | F2 | Compose hard-codes `POSTHOG_API_KEY` and `POSTHOG_HOST=https://us.i.posthog.com` on `api`. `posthog_client.py` **ignores `ENABLE_TELEMETRY`**, and `ENABLE_TELEMETRY` defaults to `true` in code, despite the docs. | **Breaks it.** Analytics events leave the server. | Maintain our own compose file with `POSTHOG_API_KEY` unset and `ENABLE_TELEMETRY=false` on both `api` and `ui`. Also block egress (F5). |
-| F3 | The prebuilt UI image bakes in a Chatwoot widget (`https://chat.dograh.com`) and a lead-form endpoint (`https://api-leads.dograh.com`). | Browser calls go to third parties. | **Build `dograh-ui` from source** at the pinned tag with those build variables blank. The same build replaces the logo with the **Buzz black logo** (BSD 2-Clause allows this; we keep the copyright notice). See D3. |
+| F3 | The prebuilt UI image bakes in a Chatwoot widget (`https://chat.dograh.com`) and a lead-form endpoint (`https://api-leads.dograh.com`). | Browser calls go to third parties. | **Build `dograh-ui` from source** at the pinned tag with those build variables blank. The same build replaces the logo with the **Buzz colour logo** (`branding/svg/buzz-logo-horizontal-color.svg`) (BSD 2-Clause allows this; we keep the copyright notice). See D3. |
 | F4 | On first sign-in, org bootstrap calls `MPS_API_URL` (`https://services.dograh.com`) to mint a Dograh service key and provision Cloudonix SIP. No flag disables it; it is non-fatal and retried. Recording "transcribe" and "create agent from template" also use MPS. | Contacts Dograh cloud. | Set `MPS_API_URL` to an unroutable internal address **(verify the app still starts cleanly)**. Archive the "Dograh" connection, set our BYOK config as the org default, and don't use template creation or upload transcription (we type transcripts by hand). |
 | F5 | Compose publishes Postgres 5432, Redis 6379 and API 8000 on all interfaces, sets `FORWARDED_ALLOW_IPS: "*"`, and falls back to default passwords. Docker port publishing **bypasses ufw**. | Breaks constraint 5. | Our compose binds data services to the internal Docker network only and the API to `127.0.0.1`; nginx is the only public entry point. Add **default-deny egress** on both servers via the `DOCKER-USER` chain, with allow-lists. That is also the strongest proof for the packet-capture test. |
 
 Two more findings affect how features work:
 
-- **Transfers are blind on Asterisk.** Dograh plays hold music, connects the caller and drops off. On Asterisk the destination must be a SIP endpoint, and the "transfer introduction" is Twilio-only. Dograh has no warm transfer. **Proposal:** transfer to `Local/<staff>@buzz-transfer`. That dialplan dials the staff phone with an announcement played only to them ("BongoHive AI desk transferring a caller about …", using the `custom_message` from Dograh's Dynamic HTTP Resolver, **verify** that it reaches the channel), lets them accept or decline, and falls back to take-a-message.
-- **QA and voicemail detection default to OpenAI.** Both must be set to **"Use Workflow's LLM"** so they stay local. `use_workflow_llm` already defaults to true for voicemail. QA defaults to the `openai` provider and must be switched on every agent; the agent export tests will check this.
+- **Transfers are blind on Asterisk.** Dograh plays hold music, connects the caller and drops off. On Asterisk the destination must be a SIP endpoint, and the "transfer introduction" is Twilio-only. Dograh has no warm transfer. *(Corrected in section 12: `custom_message` never reaches Asterisk.)* **Proposal:** transfer to `Local/<staff>@buzz-transfer`. That dialplan dials the staff phone with an announcement played only to them ("BongoHive AI desk transferring a caller about …", using the `custom_message` from Dograh's Dynamic HTTP Resolver, **verify** that it reaches the channel), lets them accept or decline, and falls back to take-a-message.
+- *(Corrected in section 12: in 1.49.0 QA already defaults to the workflow LLM.)* **QA and voicemail detection default to OpenAI.** Both must be set to **"Use Workflow's LLM"** so they stay local. `use_workflow_llm` already defaults to true for voicemail. QA defaults to the `openai` provider and must be switched on every agent; the agent export tests will check this.
 
 ---
 
@@ -38,7 +38,7 @@ Every image is pinned by tag. In Phase 1 and 2 we also record the digest in `inf
 | Redis | `redis:7` → pin to `7.4.x` (verify tag) | | with `requirepass` |
 | MinIO | `dograhai/minio:2026.09.22` | | Dograh's community fork, as upstream compose |
 | coturn | `coturn/coturn:4.8.0` | | only for the web widget and Test Audio over NAT |
-| nginx | `nginx:1.28-alpine` (verify current stable) | | TLS termination |
+| nginx | `nginx:1.30.5-alpine` (1.28 is no longer maintained) | | TLS termination |
 | vLLM | `vllm/vllm-openai:v0.31.0` (CUDA 13.0) or `v0.31.0-cu129` | 4–5 Oct 2026 | choose by driver (section 3) |
 | LLM | `Qwen/Qwen2.5-7B-Instruct-AWQ` (Apache-2.0, 5.6 GB) | | tool-call parser `hermes`, as documented by vLLM for Qwen2.5 |
 | Speaches | `ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cuda-12.6.3` | 27 Dec 2025 | **Risk:** no stable 0.9 and no commits since April 2026. Fallback is `0.8.3`. See R3. |
@@ -80,7 +80,7 @@ Because some pins are less than two weeks old (Dograh 1.49.0, vLLM 0.31.0), each
 
 **Speaches**
 - `API_KEY`
-- `PRELOAD_MODELS=["deepdml/faster-whisper-large-v3-turbo-ct2","speaches-ai/Kokoro-82M-v1.0-ONNX"]` (JSON list format **verify**)
+- *(Dropped, see section 12: cannot work offline.)* `PRELOAD_MODELS=["deepdml/faster-whisper-large-v3-turbo-ct2","speaches-ai/Kokoro-82M-v1.0-ONNX"]` (JSON list format **verify**)
 - `STT_MODEL_TTL=-1`, `TTS_MODEL_TTL=-1` so models never unload
 - `WHISPER__COMPUTE_TYPE=float16` (`int8_float16` if VRAM is tight)
 - `ENABLE_UI=false`
@@ -124,7 +124,7 @@ Start-up order: Speaches starts first, then vLLM (`depends_on: service_healthy`)
 
 ## 5. Exact Dograh settings for local providers
 
-These are set in **Settings → Model configurations** (API: `/api/v1/model-connections/...`).
+These are set in **Settings → Model configurations** (API: `/api/v1/model-connections/provider-connections`, `/model-configurations` and `/default`). `tools/dograh/configure_providers.py` does all of this section automatically.
 
 1. **Provider connections** (BYOK). Use the internal LAN address or hostname. **Never `localhost`**: inside the Dograh container, port 8000 is Dograh itself.
 
@@ -207,7 +207,7 @@ These are set in **Settings → Model configurations** (API: `/api/v1/model-conn
 
 | Requirement | Mechanism |
 |---|---|
-| Disclosure at the start of every call, not interruptible | A pre-recorded disclosure on the Start Call node. Dograh's `greeting_override` supports `type:"audio"` with a `recording_id`. Whether it is **non-interruptible** must be checked in source (**verify** in Phase 2). If not, play it in Asterisk with `Playback()` before `Stasis()` for inbound calls, and after answer in `buzz-outbound` for outbound calls. Either way, it does not depend on the LLM. |
+| Disclosure at the start of every call, not interruptible | *(Settled in section 12: played by Asterisk before the call reaches Dograh.)* A pre-recorded disclosure on the Start Call node. Dograh's `greeting_override` supports `type:"audio"` with a `recording_id`. Whether it is **non-interruptible** must be checked in source (**verify** in Phase 2). If not, play it in Asterisk with `Playback()` before `Stasis()` for inbound calls, and after answer in `buzz-outbound` for outbound calls. Either way, it does not depend on the LLM. |
 | Opted-in contacts only | The n8n trigger flow checks the HubSpot consent property. Campaign CSVs are generated only by our export script, which filters on consent. |
 | Instant voice opt-out | A Global-node tool `opt_out` (HTTP tool) posts to the suppression service and then ends the call. `buzz-outbound` checks the list before every dial (section 6). |
 | No PINs, cards or national IDs | Prompt rules in the Global node, no extraction variables of those types, and a CI linter on the workflow JSON. A regex redaction pass on transcripts in n8n before anything goes to HubSpot. |
@@ -247,7 +247,7 @@ These are set in **Settings → Model configurations** (API: `/api/v1/model-conn
 
 | ID | Brief says | Proposal | Why |
 |---|---|---|---|
-| D1 | (none) | Brand the platform "Buzz", with the black logo in the UI | Your request |
+| D1 | (none) | Brand the platform "Buzz", with the colour logo in the UI (see DECISIONS #2) | Your request |
 | D2 | Use the Dograh knowledge base | Inline prompt KB in v1; a local KB tool later | Dograh's KB sends documents to Dograh cloud (F1) |
 | D3 | Self-host Dograh with Docker | Our own compose file plus a locally built UI image | Removes hard-coded PostHog, Chatwoot and leads endpoints; fixes exposed ports (F2, F3, F5) |
 | D4 | Dial String `PJSIP/{number}@<trunk>` | `Local/{number}@buzz-outbound`, a guard context that then dials the trunk | Single enforcement point for suppression, hours, fraud and channel limits |
@@ -260,3 +260,35 @@ These are set in **Settings → Model configurations** (API: `/api/v1/model-conn
 - Section 9 question 1 answered.
 - This plan approved, including D2–D5.
 - Read-only server inspection done: `lsb_release`, `nvidia-smi`, `lspci`, `df -h`, `ss -tulpn`, `docker version`. Output pasted into `docs/inspection/`.
+
+---
+
+## 12. Build findings (19 October 2026)
+
+The base code for Phases 1 to 5 was written against the Dograh v1.49.0 source and the upstream sources of vLLM, Speaches, Asterisk 22.11.0, Prometheus and Grafana. These findings correct or settle earlier sections. Each is cited in the relevant folder's README.
+
+| # | Finding | Effect |
+|---|---|---|
+| B1 | Speaches looks up its model list on Hugging Face at start-up and exits if that fails, so `PRELOAD_MODELS` cannot be used offline. | Models are downloaded in maintenance (`infra/inference/scripts/download-models.sh`) and loaded by a one-shot `speaches-warmup` service before vLLM starts. |
+| B2 | vLLM sends usage statistics unless told not to. | `VLLM_NO_USAGE_STATS=1` and `DO_NOT_TRACK=1`. Add to the F-list as F6. |
+| B3 | Dograh sends STT audio for Asterisk calls as 8 kHz 16-bit PCM WAV plus 0.5 s of silence; TTS is requested as 24 kHz streamed PCM. | The benchmark (`tests/bench`) uses exactly this. |
+| B4 | Leaving the leads variable blank is not enough (F3): the UI falls back to `api-leads.dograh.com`. Also found: browser PostHog via an `/ingest` rewrite, Sentry tunnel, ghcr.io version check, GitHub star badge, Google STUN. | All neutralised in `infra/app` (build variables, nginx 404s, CSP, `FORCE_TURN_RELAY`). Full table in `infra/app/README.md`. |
+| B5 | **Security:** Dograh gives the MinIO `voice-audio` bucket anonymous read/write/list on every start; TURN credentials go to anonymous widget users; `/api/v1/metrics` needs `DOGRAH_DEVOPS_SECRET`. | nginx limits `/voice-audio/` to staff networks and GET/HEAD/PUT; coturn refuses relays to private addresses; metrics blocked publicly. |
+| B6 | **Inbound:** Dograh accepts a call as inbound only while the channel is still ringing, so `Playback()` before `Stasis()` on the same channel would break every inbound call. | Asterisk answers, plays the disclosure, then hands over through a fresh `Local/…@buzz-stasis/n` channel. Settles R8. |
+| B7 | The Start-node greeting can always be interrupted, and Global nodes cannot carry tools. | The disclosure lives in Asterisk (B6). `opt_out` is attached to every Start and Agent node; the linter enforces this. |
+| B8 | On Asterisk, Dograh's transfer sends only the destination; `custom_message` is spoken to the caller only. | Staff hear a fixed announcement plus an optional recorded topic prompt. Settles R7. Transfer destinations are `Local/<ext>[*topic]@buzz-transfer/n` with a 60 s timeout. |
+| B9 | Dograh's ARI originate sends no timeout (Asterisk default 30 s) and campaigns retry only hangup causes 17–19. | Ring timeout 18 s, disclosure 8 s or less; our refusals use causes 21, 29, 34 and 41 so they are never retried. Dial template gains `/n`. |
+| B10 | In 1.49.0 the QA node already defaults to the workflow LLM (`qa_use_workflow_llm`); voicemail detection still falls back to `openai` if switched off. | The linter checks both. |
+| B11 | Dograh's webhook body is a template whose values all become strings; there is no inline transcript, only a 1-hour signed URL; delivery is at least once, unsigned. | Our template and JSON Schemas are in `integrations/webhook-schemas`; n8n must de-duplicate on `X-Dograh-Delivery-Id`. |
+| B12 | Prompt audio (including the disclosure) shares the `recordings/` prefix with call recordings in MinIO. | The 90-day rule uses object tags, not the prefix, so the disclosure is never deleted. |
+| B13 | MinIO has archived the `mc` client and withdrawn its binaries and images. | `infra/backup/mc/Dockerfile` builds the last tag from source. |
+| B14 | Zambia's numbering plan (ITU/ZICTA, December 2024): 9-digit national numbers; mobile 95/75, 96/76, 97/77/57, 98; fixed 211–218; 8x and 90 special or premium. | Encoded in the suppression service; anything not assigned is refused. |
+
+### New open questions
+
+9. Which networks count as "staff networks" for listening to recordings in the browser?
+10. Which alert channel (email, Slack, WhatsApp) should Alertmanager use?
+11. Who holds the two offline backup decryption keys?
+12. Do we anonymise or delete call records after 90 days (DPIA)?
+13. Which test caller numbers can we reserve for staging?
+

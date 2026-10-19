@@ -1,0 +1,214 @@
+# Buzz public entry point. Rendered by the nginx image's envsubst step into
+# /etc/nginx/conf.d/buzz.conf. Substituted variables (NGINX_ENVSUBST_FILTER):
+#   ${PUBLIC_HOST} ${TLS_CERT_FILE} ${TLS_KEY_FILE} ${GRAFANA_UPSTREAM}
+# Everything else that starts with $ is an nginx variable.
+#
+# Routing mirrors Dograh v1.49.0 deploy/templates/nginx.remote.conf.template:
+#   /api/v1/      -> api:8000 (REST and every WebSocket: telephony media
+#                    /api/v1/telephony/ws/..., ARI /api/v1/telephony/ws/ari,
+#                    WebRTC signalling /api/v1/ws/signaling/... and
+#                    /api/v1/ws/public/signaling/..., agent streams)
+#   /voice-audio/ -> minio:9000/voice-audio/ (recordings, uploads)
+#   /             -> ui:3010
+# Added for Buzz: /grafana/, blocked internal paths, telemetry sinks, and
+# security headers.
+
+server_tokens off;
+
+# Staff networks, from /etc/nginx/buzz-local/staff-cidrs.conf ("<cidr> 1;").
+geo $buzz_staff {
+    default 0;
+    include /etc/nginx/buzz-local/staff-cidrs.conf;
+}
+
+# Send "Connection: upgrade" only when the client asked for a WebSocket, so
+# ordinary requests can reuse upstream keepalive connections.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      '';
+}
+
+upstream dograh_api {
+    # FASTAPI_WORKERS is fixed at 1 in docker-compose.yml.
+    server api:8000 max_fails=3 fail_timeout=10s;
+    keepalive 32;
+}
+
+upstream dograh_ui {
+    server ui:3010;
+    keepalive 16;
+}
+
+# ---------------------------------------------------------------------------
+# Port 80: ACME HTTP-01 challenges, health check, redirect to HTTPS.
+# ---------------------------------------------------------------------------
+server {
+    listen 80 default_server;
+    server_name ${PUBLIC_HOST};
+
+    # Let's Encrypt (Q2). certbot --webroot -w <ACME_WEBROOT> writes here.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    # Container health check only (127.0.0.1 inside the container).
+    location = /nginx-health {
+        access_log off;
+        allow 127.0.0.1;
+        deny all;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 301 https://${PUBLIC_HOST}$request_uri;
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Port 443, unknown host names: refuse the TLS handshake.
+# ---------------------------------------------------------------------------
+server {
+    listen 443 ssl default_server;
+    server_name _;
+    ssl_reject_handshake on;
+}
+
+# ---------------------------------------------------------------------------
+# Port 443: Buzz.
+# ---------------------------------------------------------------------------
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${PUBLIC_HOST};
+
+    # Let's Encrypt: TLS_CERT_DIR=/etc/letsencrypt and
+    #   TLS_CERT_FILE=/etc/nginx/certs/live/<host>/fullchain.pem
+    #   TLS_KEY_FILE=/etc/nginx/certs/live/<host>/privkey.pem
+    # Internal CA: TLS_CERT_DIR=./certs with fullchain.pem and privkey.pem
+    # (leaf certificate followed by any intermediates).
+    ssl_certificate     ${TLS_CERT_FILE};
+    ssl_certificate_key ${TLS_KEY_FILE};
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:buzz_tls:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    client_max_body_size 100M;
+
+    include /etc/nginx/buzz/security-headers.conf;
+
+    # --- Internal-only api endpoints -------------------------------------
+    # Prometheus metrics and the deploy/autoscale probes. Prometheus scrapes
+    # 127.0.0.1:8000 directly with X-Dograh-Devops-Secret.
+    location ~ ^/api/v1/(metrics|health/active-calls|health/autoscale-metric)(/|$) {
+        return 404;
+    }
+
+    # --- Telemetry and phone-home paths in the Dograh UI -----------------
+    # /ingest/* is a Next.js rewrite to us.i.posthog.com; /monitoring is the
+    # Sentry tunnel route (ui/next.config.ts). Neither is used with
+    # telemetry off; block them so they can never proxy out.
+    location ^~ /ingest/   { return 404; }
+    location = /ingest     { return 404; }
+    location ^~ /monitoring { return 404; }
+
+    # The UI server polls ghcr.io for newer Dograh tags
+    # (ui/src/app/api/config/latest-version/route.ts). Answer locally.
+    location = /api/config/latest-version {
+        default_type application/json;
+        return 200 '{"latest":null}';
+    }
+
+    # Lead and onboarding forms post here once the UI build sets
+    # NEXT_PUBLIC_ONBOARDING_API_URL=/_buzz/disabled (ui-build/patch-ui.sh).
+    # Unset, they would go to https://api-leads.dograh.com.
+    location ^~ /_buzz/disabled/ {
+        access_log off;
+        return 404;
+    }
+
+    # --- Dograh api: REST and WebSockets ---------------------------------
+    location /api/v1/ {
+        proxy_pass http://dograh_api;
+        proxy_http_version 1.1;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+
+        # Long-lived WebSockets: call audio and signalling.
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    # --- MinIO bucket voice-audio ----------------------------------------
+    # Dograh sets an anonymous read/write/delete/list policy on this bucket
+    # every time the api starts (api/services/filesystem/minio.py) and builds
+    # plain unsigned URLs. So nginx is the only access control here:
+    # staff networks only, object GET/HEAD/PUT only, no listing, no delete.
+    location = /voice-audio/ { return 403; }
+    location /voice-audio/ {
+        if ($buzz_staff = 0) { return 403; }
+        # Listing and multipart/admin sub-resources.
+        if ($args ~* "(^|&)(list-type|prefix|delimiter|uploads|policy|acl|versions|lifecycle)(=|&|$)") {
+            return 403;
+        }
+        limit_except GET HEAD PUT {
+            deny all;
+        }
+
+        proxy_pass http://minio:9000/voice-audio/;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # --- Grafana (infra/monitoring) --------------------------------------
+    # Grafana joins buzz-app as "grafana" and serves from /grafana/
+    # (GF_SERVER_ROOT_URL, GF_SERVER_SERVE_FROM_SUB_PATH=true). The name is
+    # resolved per request through Docker's DNS, so nginx still starts (and
+    # returns 502 here) while the monitoring stack is down. With a variable,
+    # proxy_pass forwards the original /grafana/... URI unchanged.
+    location /grafana/ {
+        if ($buzz_staff = 0) { return 403; }
+        resolver 127.0.0.11 valid=30s ipv6=off;
+        set $buzz_grafana ${GRAFANA_UPSTREAM};
+        proxy_pass $buzz_grafana;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    # --- Dograh UI (Next.js) ---------------------------------------------
+    location / {
+        proxy_pass http://dograh_ui;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}

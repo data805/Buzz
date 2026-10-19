@@ -1,0 +1,37 @@
+# Allow-list for tests/egress/analyse_egress.py (PLAN F5, constraint 1 "fully local").
+# ${VAR} expands from the environment; comma-separated values are split.
+
+# Addresses that belong to our own two hosts (any interface, incl. public IPs).
+local_addresses:
+  - ${APP_LAN_IP}
+  - ${INFERENCE_LAN_IP}
+  - ${APP_PUBLIC_IP}
+
+allowed_networks:
+  - 10.0.0.0/8          # RFC 1918 LAN (narrow to the real LAN subnet once known)
+  - 172.16.0.0/12       # includes buzz-app 172.30.0.0/24 and other Docker bridges
+  - 192.168.0.0/16
+  - 127.0.0.0/8
+  - 169.254.0.0/16      # link-local
+  - 224.0.0.0/4         # multicast (mDNS, VRRP)
+  - 255.255.255.255/32
+  - 0.0.0.0/32          # DHCP discover source
+  - ::1/128
+  - fe80::/10
+  - ff00::/8
+  - fc00::/7            # IPv6 ULA
+
+# SIP trunk signalling and media addresses from the carrier (PLAN 9 Q4).
+carrier_networks:
+  - ${CARRIER_NETWORKS}
+
+# Anything else deliberately reachable, e.g. the internal DNS resolver or NTP
+# server if they are outside the ranges above.
+extra_allowed:
+  - ${DNS_RESOLVERS}
+  - ${NTP_SERVERS}
+
+# Local ports that accept traffic from the public internet (INTERFACES.md
+# "Ports"). Replies from these ports to unknown addresses are allowed too.
+# SIP 5060 and RTP are NOT listed: those must come from carrier_networks only.
+allowed_inbound_ports: [80, 443, 3478, 5349]

@@ -1,0 +1,18 @@
+[Unit]
+Description=Buzz nightly backup (Postgres, suppression SQLite, Asterisk, MinIO)
+Documentation=file:///opt/buzz/voice-agent/infra/backup/README.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/buzz/voice-agent/infra/backup/backup.sh
+Environment=BUZZ_BACKUP_ENV=/opt/buzz/voice-agent/infra/backup/.env
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=6h
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true

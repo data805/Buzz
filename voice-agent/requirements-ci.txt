@@ -1,0 +1,4 @@
+# Everything the offline test suites need, for CI and local runs (see scripts/test-all.sh).
+-r integrations/suppression-service/requirements-dev.txt
+PyYAML==6.0.3
+audioop-lts==0.2.2; python_version >= "3.13"

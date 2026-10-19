@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Buzz retention job nightly at 03:30 (after the backup)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Africa/Lusaka
+RandomizedDelaySec=10m
+Persistent=true
+Unit=buzz-retention.service
+
+[Install]
+WantedBy=timers.target

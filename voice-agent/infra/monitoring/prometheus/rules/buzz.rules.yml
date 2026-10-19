@@ -1,0 +1,241 @@
+# Buzz alert rules. Metric sources are listed in ../../README.md.
+# Labels: severity = warning | critical; component = what the runbook section is.
+
+groups:
+  - name: buzz-availability
+    rules:
+      - alert: DograhApiDown
+        expr: up{job="dograh"} == 0 or absent(up{job="dograh"})
+        for: 2m
+        labels: { severity: critical, component: dograh }
+        annotations:
+          summary: "Dograh api metrics endpoint is not answering ({{ $labels.instance }})"
+          description: >-
+            Scrape of /api/v1/metrics failed. Check the api container, and that
+            ENABLE_PROMETHEUS_METRICS=true and DOGRAH_DEVOPS_SECRET match
+            (404 = metrics disabled, 503 = secret unset, 403 = secret mismatch).
+
+      - alert: DograhHealthProbeFailing
+        expr: probe_success{job="blackbox_http", service="dograh"} == 0
+        for: 2m
+        labels: { severity: critical, component: dograh }
+        annotations:
+          summary: "Dograh /api/v1/health is failing"
+
+      - alert: VllmDown
+        expr: up{job="vllm"} == 0 or absent(up{job="vllm"})
+        for: 1m
+        labels: { severity: critical, component: llm }
+        annotations:
+          summary: "vLLM on {{ $labels.instance }} is down; agents cannot answer"
+
+      - alert: SpeachesDown
+        expr: probe_success{job="blackbox_http", service="speaches"} == 0 or absent(probe_success{job="blackbox_http", service="speaches"})
+        for: 1m
+        labels: { severity: critical, component: speech }
+        annotations:
+          summary: "Speaches /health is failing ({{ $labels.instance }}); no STT/TTS"
+
+      - alert: DcgmExporterDown
+        expr: up{job="dcgm"} == 0
+        for: 5m
+        labels: { severity: warning, component: gpu }
+        annotations:
+          summary: "DCGM exporter on {{ $labels.instance }} is down; GPU alerts are blind"
+
+      - alert: NodeExporterDown
+        expr: up{job="node"} == 0
+        for: 2m
+        labels: { severity: critical, component: host }
+        annotations:
+          summary: "node-exporter on {{ $labels.host }} is not answering (host down or unreachable?)"
+
+      - alert: AsteriskDown
+        expr: up{job="asterisk"} == 0 or absent(up{job="asterisk"})
+        for: 1m
+        labels: { severity: critical, component: telephony }
+        annotations:
+          summary: "Asterisk HTTP/metrics on {{ $labels.instance }} is not answering; no calls"
+
+      - alert: AsteriskTrunkNotRegistered
+        # 0 = Unregistered, 1 = Registered, 2 = Rejected (res/prometheus/pjsip_outbound_registrations.c).
+        # Only exists if the trunk uses outbound registration; IP-authenticated trunks have no series.
+        expr: asterisk_pjsip_outbound_registration_status != 1
+        for: 2m
+        labels: { severity: critical, component: telephony }
+        annotations:
+          summary: "SIP trunk registration {{ $labels.username }}@{{ $labels.domain }} is not registered (status {{ $value }})"
+
+      - alert: SuppressionServiceDown
+        expr: up{job="suppression"} == 0 or absent(up{job="suppression"})
+        for: 1m
+        labels: { severity: critical, component: compliance }
+        annotations:
+          summary: "Suppression service is down; the dialplan fails closed, so outbound calls stop"
+
+  - name: buzz-gpu
+    rules:
+      - alert: GpuMemoryHigh
+        expr: DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE) > 0.95
+        for: 5m
+        labels: { severity: warning, component: gpu }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} on {{ $labels.Hostname }} memory above 95% ({{ $value | humanizePercentage }})"
+          description: "vLLM reserves a fixed share; growth beyond that is Speaches. OOM would stop STT/TTS."
+
+      - alert: GpuTemperatureHigh
+        expr: DCGM_FI_DEV_GPU_TEMP > 83
+        for: 5m
+        labels: { severity: warning, component: gpu }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} at {{ $value }} °C"
+
+      - alert: GpuTemperatureCritical
+        expr: DCGM_FI_DEV_GPU_TEMP > 90
+        for: 2m
+        labels: { severity: critical, component: gpu }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} at {{ $value }} °C; thermal throttling likely"
+
+      - alert: GpuXidError
+        expr: DCGM_FI_DEV_XID_ERRORS > 0
+        for: 1m
+        labels: { severity: warning, component: gpu }
+        annotations:
+          summary: "GPU {{ $labels.gpu }} reported XID error {{ $value }}"
+
+  - name: buzz-llm
+    rules:
+      - record: buzz:vllm_ttft_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum by (le, model_name) (rate(vllm:time_to_first_token_seconds_bucket[5m])))
+      - record: buzz:vllm_ttft_seconds:p50_5m
+        expr: histogram_quantile(0.50, sum by (le, model_name) (rate(vllm:time_to_first_token_seconds_bucket[5m])))
+
+      - alert: VllmRequestsQueued
+        expr: max by (instance) (vllm:num_requests_waiting) > 0
+        for: 2m
+        labels: { severity: warning, component: llm }
+        annotations:
+          summary: "vLLM has had {{ $value }} queued requests for 2 minutes (saturated)"
+
+      - alert: VllmQueueLong
+        expr: max by (instance) (vllm:num_requests_waiting) >= 5
+        for: 1m
+        labels: { severity: critical, component: llm }
+        annotations:
+          summary: "vLLM queue at {{ $value }}; callers are hearing long pauses"
+
+      - alert: VllmTtftP95High
+        # Budget 0.5 s of the 1.2 s turn target (verify against the Phase 1 benchmark).
+        # Only fires when there is traffic (at least ~3 requests a minute).
+        expr: |
+          buzz:vllm_ttft_seconds:p95_5m > 0.5
+          and on (model_name) sum by (model_name) (rate(vllm:time_to_first_token_seconds_count[5m])) > 0.05
+        for: 5m
+        labels: { severity: warning, component: llm }
+        annotations:
+          summary: "vLLM TTFT p95 {{ $value | humanizeDuration }} is above the 0.5 s budget"
+
+      - alert: VllmKvCacheNearlyFull
+        expr: max by (instance) (vllm:kv_cache_usage_perc) > 0.9
+        for: 5m
+        labels: { severity: warning, component: llm }
+        annotations:
+          summary: "vLLM KV cache {{ $value | humanizePercentage }} full; preemptions will follow"
+
+      - alert: DograhResponseLatencyHigh
+        # User stops speaking -> bot starts speaking (api/services/observability/metrics.py).
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(dograh_response_latency_seconds_bucket{kind="user_to_bot"}[10m]))) > 1.2
+          and sum(rate(dograh_response_latency_seconds_count{kind="user_to_bot"}[10m])) > 0.02
+        for: 10m
+        labels: { severity: warning, component: dograh }
+        annotations:
+          summary: "Voice response latency p95 {{ $value | humanizeDuration }} is above the 1.2 s target"
+
+  - name: buzz-compliance
+    rules:
+      - alert: SuppressionDenySpike
+        # Metric name proposed for integrations/suppression-service (verify).
+        expr: |
+          sum(rate(suppression_checks_total{decision="deny"}[10m]))
+            / sum(rate(suppression_checks_total[10m])) > 0.5
+          and sum(increase(suppression_checks_total[10m])) > 20
+        for: 5m
+        labels: { severity: warning, component: compliance }
+        annotations:
+          summary: "Over half of dial checks are being denied ({{ $value | humanizePercentage }}); bad campaign list or a bug?"
+
+  - name: buzz-host
+    rules:
+      - alert: DiskSpaceHigh
+        expr: |
+          1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs|ramfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs|ramfs"} > 0.85
+        for: 10m
+        labels: { severity: warning, component: host }
+        annotations:
+          summary: "{{ $labels.host }} {{ $labels.mountpoint }} is {{ $value | humanizePercentage }} full"
+
+      - alert: DiskSpaceCritical
+        expr: |
+          1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs|ramfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|nsfs|ramfs"} > 0.95
+        for: 5m
+        labels: { severity: critical, component: host }
+        annotations:
+          summary: "{{ $labels.host }} {{ $labels.mountpoint }} is {{ $value | humanizePercentage }} full"
+
+      - alert: HostMemoryHigh
+        expr: 1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes > 0.9
+        for: 10m
+        labels: { severity: warning, component: host }
+        annotations:
+          summary: "{{ $labels.host }} memory {{ $value | humanizePercentage }} used"
+
+      - alert: HostCpuHigh
+        expr: 1 - avg by (host) (rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.9
+        for: 15m
+        labels: { severity: warning, component: host }
+        annotations:
+          summary: "{{ $labels.host }} CPU {{ $value | humanizePercentage }} busy"
+
+  - name: buzz-backup
+    rules:
+      - alert: BackupTooOld
+        # Written by infra/backup/backup.sh to the node-exporter textfile collector.
+        expr: time() - buzz_backup_last_success_timestamp_seconds > 26 * 3600
+        for: 10m
+        labels: { severity: critical, component: backup }
+        annotations:
+          summary: "Last successful backup was {{ $value | humanizeDuration }} ago"
+
+      - alert: BackupMetricMissing
+        expr: absent(buzz_backup_last_success_timestamp_seconds{host="app"})
+        for: 26h
+        labels: { severity: warning, component: backup }
+        annotations:
+          summary: "No backup has ever reported success on the app host"
+
+      - alert: BackupLastRunFailed
+        expr: buzz_backup_last_run_success == 0
+        for: 5m
+        labels: { severity: warning, component: backup }
+        annotations:
+          summary: "The last backup run failed; see journalctl -u buzz-backup.service"
+
+      - alert: RetentionJobTooOld
+        expr: time() - buzz_retention_last_success_timestamp_seconds > 26 * 3600
+        for: 10m
+        labels: { severity: warning, component: backup }
+        annotations:
+          summary: "Retention job (recording/transcript purge) last succeeded {{ $value | humanizeDuration }} ago"
+
+  - name: buzz-monitoring
+    rules:
+      - alert: AlertmanagerNotificationsFailing
+        expr: sum by (integration) (rate(alertmanager_notifications_failed_total[10m])) > 0
+        for: 10m
+        labels: { severity: warning, component: monitoring }
+        annotations:
+          summary: "Alertmanager cannot deliver {{ $labels.integration }} notifications; check Grafana or :9093"

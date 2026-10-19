@@ -1,0 +1,362 @@
+# Buzz app stack: Dograh api/ui, Postgres, Redis, MinIO, coturn, nginx and
+# the suppression service. Replaces Dograh's own docker-compose.yaml (D3).
+#
+# Differences from Dograh v1.49.0's compose, and why:
+#   - No PostHog key or host, ENABLE_TELEMETRY=false on api and ui (F2).
+#   - MPS_API_URL points at a closed local port, so org bootstrap, the
+#     "dograh" provider and recording transcription cannot reach
+#     services.dograh.com (F4).
+#   - No dograh-init, no cloudflared/tunnel profile, no start_docker.sh.
+#     nginx renders its own template; coturn renders its own config.
+#   - Postgres, Redis and MinIO publish no ports. The api is published on
+#     127.0.0.1:8000 only. nginx is the only public HTTP entry point (F5).
+#   - No default passwords: every secret uses ${VAR:?}, so compose refuses
+#     to start without it. Generate them with scripts/gen-secrets.sh.
+#   - FORWARDED_ALLOW_IPS is the nginx address, not "*".
+#   - The UI is built from source with Chatwoot and the leads endpoint
+#     blanked and Buzz branding (ui-build/), not pulled from Docker Hub (F3).
+#   - FORCE_TURN_RELAY defaults to true, which also removes the
+#     stun.l.google.com entry Dograh adds on both server and browser.
+#
+# Hosts, ports and the network are defined in docs/INTERFACES.md.
+#
+# Usage (from infra/app/):
+#   ./scripts/gen-secrets.sh        # once; writes .env
+#   ./ui-build/build-ui.sh          # builds buzz/dograh-ui:1.49.0-buzz1
+#   docker compose up -d
+# See README.md for the full runbook.
+
+name: buzz-app
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging: *default-logging
+
+services:
+  postgres:
+    <<: *hardening
+    # pgvector 0.8.7 on Postgres 17 (Debian bookworm). Dograh expects pgvector.
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      # Baked into the volume on first start. Changing it later does not
+      # re-key the database; change it with psql first.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (scripts/gen-secrets.sh)}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - buzz-app
+    # No ports: reachable only on buzz-app.
+
+  redis:
+    <<: *hardening
+    image: redis:7.4.11-alpine
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"
+      # Lets redis-cli in the healthcheck authenticate without -a on the command line.
+      REDISCLI_AUTH: "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"
+    command: ["sh", "-c", 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - buzz-app
+
+  minio:
+    <<: *hardening
+    # Dograh's community fork of MinIO; upstream no longer publishes images.
+    image: dograhai/minio:2026.09.22
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}"
+      # Dograh uses "*". Browsers only reach MinIO through nginx on our own origin.
+      MINIO_API_CORS_ALLOW_ORIGIN: "${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env}"
+      # No web console, no call-home, no update checks (verify these keys on the fork).
+      MINIO_BROWSER: "off"
+      MINIO_CALLHOME_ENABLE: "off"
+      MINIO_UPDATE: "off"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - buzz-app
+    # No ports. nginx proxies /voice-audio/ to minio:9000 for staff browsers.
+
+  api:
+    <<: *hardening
+    image: dograhai/dograh-api:1.49.0
+    environment:
+      # --- Mode and telemetry (PLAN section 5) ---
+      ENVIRONMENT: production
+      DEPLOYMENT_MODE: oss
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      ENABLE_TELEMETRY: "false"
+      # posthog_client.py creates a client whenever POSTHOG_API_KEY is truthy,
+      # whatever ENABLE_TELEMETRY says (F2). Empty string = no client.
+      POSTHOG_API_KEY: ""
+      POSTHOG_HOST: "http://127.0.0.1:9"
+      # app.py only calls sentry_sdk.init when SENTRY_DSN is set.
+      SENTRY_DSN: ""
+      # Dograh cloud services (MPS): org bootstrap service key, Cloudonix
+      # provisioning, the "dograh" provider, recording transcription, KB
+      # ingestion, usage pages. Port 9 (discard) on loopback: connection
+      # refused at once, nothing leaves the host (F4).
+      MPS_API_URL: "http://127.0.0.1:9"
+      DOGRAH_MPS_SECRET_KEY: ""
+      # Tuner integration default is https://api.usetuner.ai; only used if an
+      # org enables that integration. Blackholed as well.
+      TUNER_BASE_URL: "http://127.0.0.1:9"
+      # Belt and braces for Python libraries that may try the Hugging Face Hub.
+      HF_HUB_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      DO_NOT_TRACK: "1"
+
+      # --- Authentication ---
+      AUTH_PROVIDER: local
+      OSS_JWT_SECRET: "${OSS_JWT_SECRET:?set OSS_JWT_SECRET in .env}"
+      # true only while the first admin accounts are created (README).
+      ENABLE_SIGNUP: "${ENABLE_SIGNUP:-false}"
+
+      # --- URLs and proxy ---
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env}"
+      PUBLIC_HOST: "${PUBLIC_HOST:?set PUBLIC_HOST in .env}"
+      # A hostname here is treated as public by api/utils/common.py, so the
+      # api never looks for a Cloudflare tunnel (http://cloudflared:2000).
+      BACKEND_API_ENDPOINT: "${PUBLIC_BASE_URL}"
+      UI_APP_URL: "${PUBLIC_BASE_URL}"
+      # Trust X-Forwarded-* only from nginx (fixed address on buzz-app).
+      FORWARDED_ALLOW_IPS: "172.30.0.10"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-}"
+
+      # --- Data ---
+      DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?}@postgres:5432/postgres"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?}@redis:6379"
+      ENABLE_AWS_S3: "false"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_PUBLIC_ENDPOINT: "${PUBLIC_BASE_URL}"
+      MINIO_ACCESS_KEY: "${MINIO_ROOT_USER:?}"
+      MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD:?}"
+      MINIO_BUCKET: voice-audio
+      MINIO_SECURE: "false"
+      ENABLE_CALL_RECORDING_UPLOAD: "${ENABLE_CALL_RECORDING_UPLOAD:-true}"
+
+      # --- Processes ---
+      # Fixed at 1: nginx has a single upstream api:8000. More workers would
+      # listen on 8001+ and need extra upstream lines in the nginx template.
+      FASTAPI_WORKERS: "1"
+      ENABLE_ARI_MANAGER: "true"
+      ENABLE_CAMPAIGN_ORCHESTRATOR: "true"
+      DEFAULT_ORG_CONCURRENCY_LIMIT: "${DEFAULT_ORG_CONCURRENCY_LIMIT:-10}"
+
+      # --- Telephony ---
+      TELEPHONY_WS_TOKEN_SECRET: "${TELEPHONY_WS_TOKEN_SECRET:?set TELEPHONY_WS_TOKEN_SECRET in .env}"
+      TELEPHONY_WS_TOKEN_ENFORCE: "${TELEPHONY_WS_TOKEN_ENFORCE:-true}"
+
+      # --- WebRTC / TURN (web widget and Test Audio) ---
+      ENABLE_COTURN: "true"
+      TURN_SECRET: "${TURN_SECRET:?set TURN_SECRET in .env}"
+      # Empty means "derive from PUBLIC_HOST" (api/constants.py).
+      TURN_HOST: "${TURN_HOST:-}"
+      # true: relay-only, and no stun:stun.l.google.com:19302 entry on the
+      # server (webrtc_signaling.get_ice_servers) or in the browser
+      # (useWebSocketRTC.tsx).
+      FORCE_TURN_RELAY: "${FORCE_TURN_RELAY:-true}"
+      SERVER_IP: "${SERVER_IP:?set SERVER_IP (this host's IPv4) in .env}"
+
+      # --- Operations ---
+      # Served at /api/v1/metrics, which needs header X-Dograh-Devops-Secret.
+      # nginx blocks the path publicly; Prometheus scrapes 127.0.0.1:8000.
+      ENABLE_PROMETHEUS_METRICS: "true"
+      DOGRAH_DEVOPS_SECRET: "${DOGRAH_DEVOPS_SECRET:?set DOGRAH_DEVOPS_SECRET in .env}"
+
+      # --- Tracing: our self-hosted Langfuse only (Q8). Leave all blank until
+      # it exists. api/constants.py refuses to start if host and both keys
+      # are set without LANGFUSE_PROJECT_ID.
+      LANGFUSE_HOST: "${LANGFUSE_HOST:-}"
+      LANGFUSE_PUBLIC_KEY: "${LANGFUSE_PUBLIC_KEY:-}"
+      LANGFUSE_SECRET_KEY: "${LANGFUSE_SECRET_KEY:-}"
+      LANGFUSE_PROJECT_ID: "${LANGFUSE_PROJECT_ID:-}"
+      LANGFUSE_TRACES_PUBLIC: "false"
+    extra_hosts:
+      # Asterisk ARI/HTTP is bound to the buzz-app gateway (INTERFACES.md).
+      # Configure the ARI endpoint in Dograh as http://asterisk:8088
+      # (or http://172.30.0.1:8088).
+      - "asterisk:172.30.0.1"
+    ports:
+      # Loopback only: nginx uses the Docker network; Asterisk (host network)
+      # and Prometheus use 127.0.0.1:8000.
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/api/v1/health'').read()"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - buzz-app
+
+  ui:
+    <<: *hardening
+    # Built locally by ui-build/build-ui.sh from tag dograh-v1.49.0.
+    image: buzz/dograh-ui:1.49.0-buzz1
+    pull_policy: never
+    environment:
+      HOSTNAME: "0.0.0.0"
+      # Server-side rendering talks to the api over buzz-app.
+      BACKEND_URL: "http://api:8000"
+      NODE_ENV: oss
+      # /api/config/posthog and /api/config/sentry report enabled=false.
+      ENABLE_TELEMETRY: "false"
+      POSTHOG_KEY: ""
+      SENTRY_DSN: ""
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3010 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - buzz-app
+    # No ports: nginx proxies to ui:3010.
+
+  coturn:
+    <<: *hardening
+    image: coturn/coturn:4.8.0
+    # Our own small init replaces dograh-init: render-and-run.sh fills the
+    # template from the environment into /tmp and execs turnserver.
+    entrypoint: ["/bin/sh", "/etc/buzz-coturn/render-and-run.sh"]
+    environment:
+      TURN_SECRET: "${TURN_SECRET:?}"
+      TURN_EXTERNAL_IP: "${SERVER_IP:?}"
+      TURN_REALM: "${PUBLIC_HOST:?}"
+    volumes:
+      - ./coturn:/etc/buzz-coturn:ro
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49152-49200:49152-49200/udp"
+      # 5349 (TURN over TLS) is not published: Dograh v1.49.0 never hands out
+      # turns: URIs (api/routes/turn_credentials.py), so the config disables TLS.
+    networks:
+      - buzz-app
+
+  nginx:
+    <<: *hardening
+    image: nginx:1.30.5-alpine
+    environment:
+      PUBLIC_HOST: "${PUBLIC_HOST:?}"
+      TLS_CERT_FILE: "${TLS_CERT_FILE:-/etc/nginx/certs/fullchain.pem}"
+      TLS_KEY_FILE: "${TLS_KEY_FILE:-/etc/nginx/certs/privkey.pem}"
+      GRAFANA_UPSTREAM: "${GRAFANA_UPSTREAM:-http://grafana:3000}"
+      # The image's entrypoint runs envsubst on /etc/nginx/templates/*.template
+      # into /etc/nginx/conf.d. Only these variables are substituted, so
+      # nginx's own $host etc. are left alone.
+      NGINX_ENVSUBST_FILTER: "^(PUBLIC_HOST|TLS_CERT_FILE|TLS_KEY_FILE|GRAFANA_UPSTREAM)$$"
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - ./nginx/snippets:/etc/nginx/buzz:ro
+      - ./nginx/staff-cidrs.conf:/etc/nginx/buzz-local/staff-cidrs.conf:ro
+      - "${TLS_CERT_DIR:-./certs}:/etc/nginx/certs:ro"
+      - "${ACME_WEBROOT:-./nginx/acme}:/var/www/acme:ro"
+    # Fresh conf.d on every start, so the image's default.conf never loads.
+    tmpfs:
+      - /etc/nginx/conf.d
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      api:
+        condition: service_healthy
+      ui:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      buzz-app:
+        ipv4_address: 172.30.0.10
+
+  suppression:
+    <<: *hardening
+    # Written in integrations/suppression-service (see INTERFACES.md).
+    build:
+      context: ../../integrations/suppression-service
+    image: buzz/suppression-service:local
+    environment:
+      SUPPRESSION_API_KEY: "${SUPPRESSION_API_KEY:?set SUPPRESSION_API_KEY in .env}"
+      SUPPRESSION_DB_PATH: /data/suppression.db
+    volumes:
+      - suppression_data:/data
+    ports:
+      # Asterisk CURL() and Prometheus use 127.0.0.1:8090. Dograh's opt_out
+      # tool can use http://suppression:8080 on buzz-app.
+      - "127.0.0.1:8090:8080"
+    healthcheck:
+      # Assumes a Python image (verify with the suppression-service builder).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - buzz-app
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  suppression_data:
+
+networks:
+  buzz-app:
+    name: buzz-app
+    driver: bridge
+    driver_opts:
+      # Stable bridge name for the firewall and packet capture.
+      com.docker.network.bridge.name: br-buzz-app
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1

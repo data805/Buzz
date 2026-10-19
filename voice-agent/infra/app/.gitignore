@@ -1,0 +1,7 @@
+# Local, per-host files (secrets and site config). Templates are committed.
+.env
+certs/
+nginx/staff-cidrs.conf
+nginx/acme/*
+!nginx/acme/.gitkeep
+ui-build/work/

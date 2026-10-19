@@ -1,0 +1,56 @@
+# coturn for Buzz: TURN relay for the web widget and Test Audio.
+# Rendered at container start by render-and-run.sh. Placeholders:
+#   __TURN_EXTERNAL_IP__  this host's IPv4 (SERVER_IP)
+#   __TURN_REALM__        PUBLIC_HOST
+#   __TURN_SECRET__       TURN_SECRET (shared with the Dograh api)
+#
+# Based on Dograh v1.49.0 deploy/templates/turnserver.remote.conf.template,
+# with TLS disabled (Dograh issues no turns: URIs) and peer restrictions added.
+
+listening-port=3478
+
+# Relay ports; must match the published range in docker-compose.yml.
+min-port=49152
+max-port=49200
+
+# Address browsers are told to use.
+external-ip=__TURN_EXTERNAL_IP__
+
+realm=__TURN_REALM__
+
+# TURN REST API: Dograh mints username "<expiry>:<user>" and password
+# base64(HMAC-SHA1(TURN_SECRET, username)) in api/routes/turn_credentials.py.
+use-auth-secret
+static-auth-secret=__TURN_SECRET__
+
+# No TLS/DTLS listener: Dograh only hands out turn: URIs on 3478.
+no-tls
+no-dtls
+
+# Stop authenticated users (including anonymous web-widget sessions, which
+# also receive TURN credentials) from relaying into private networks such as
+# buzz-app (Postgres, Redis, MinIO) or the LAN.
+no-multicast-peers
+denied-peer-ip=0.0.0.0-0.255.255.255
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=100.64.0.0-100.127.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.0.0.0-192.0.0.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=198.18.0.0-198.19.255.255
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+# Relay-to-relay between the browser and the Dograh api goes through our own
+# external address, which may itself be a LAN address (Q2). Allow only it.
+allowed-peer-ip=__TURN_EXTERNAL_IP__
+
+# Limits: each Test Audio call uses two allocations (browser + api).
+user-quota=4
+total-quota=48
+
+fingerprint
+no-cli
+log-file=stdout

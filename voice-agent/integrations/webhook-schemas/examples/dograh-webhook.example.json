@@ -1,0 +1,20 @@
+{
+  "schema": "buzz.dograh-webhook.v1",
+  "workflow_run_id": "1842",
+  "workflow_id": "7",
+  "workflow_name": "Buzz outbound: Bootcamp follow-up",
+  "campaign_id": "12",
+  "call_time": "2026-10-19T09:15:02.481236+00:00",
+  "direction": "outbound",
+  "caller_number": "+260211000000",
+  "called_number": "+260971234567",
+  "hubspot_contact_id": "51234",
+  "call_status": "end_call",
+  "call_disposition": "callback_requested",
+  "mapped_call_disposition": "callback_requested",
+  "call_tags": "[\"bootcamp\", \"callback\"]",
+  "summary": "Caller asked about the Data Science bootcamp fees (K1,500 per month) and gave PIN 4321 by mistake. Wants a call back on Friday.",
+  "opt_out_requested": "False",
+  "duration_seconds": "143",
+  "transcript_url": "https://voice.bongohive.co.zm/api/v1/public/download/workflow/3f1c2a9e-8b7d-4c11-9e2f-0a1b2c3d4e5f/transcript"
+}

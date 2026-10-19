@@ -1,0 +1,62 @@
+# Buzz Alertmanager configuration.
+#
+# One receiver for now: a generic webhook whose URL is read from
+# /run/secrets/alertmanager_webhook_url (written by ../render.sh from
+# ALERT_WEBHOOK_URL in .env). Email and Slack are still to be decided; the
+# commented receivers below show where they go. Edit `route.routes` to send
+# particular alerts elsewhere, then reload:
+#   curl -X POST http://127.0.0.1:9093/-/reload
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: buzz-webhook
+  group_by: [alertname, severity, host]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Critical: page quickly and repeat hourly.
+    - matchers: ['severity="critical"']
+      receiver: buzz-webhook
+      group_wait: 10s
+      repeat_interval: 1h
+    # Backup and retention problems: once a day is enough.
+    - matchers: ['component="backup"']
+      receiver: buzz-webhook
+      repeat_interval: 24h
+    # Example: route compliance alerts to a separate channel once one exists.
+    # - matchers: ['component="compliance"']
+    #   receiver: buzz-compliance-slack
+
+inhibit_rules:
+  # A host that is down explains every service on it being down.
+  - source_matchers: ['alertname="NodeExporterDown"']
+    target_matchers: ['severity=~"warning|critical"']
+    equal: [host]
+  # A critical alert silences the warning of the same name on the same instance.
+  - source_matchers: ['severity="critical"']
+    target_matchers: ['severity="warning"']
+    equal: [alertname, instance]
+
+receivers:
+  - name: buzz-webhook
+    webhook_configs:
+      - url_file: /run/secrets/alertmanager_webhook_url
+        send_resolved: true
+        max_alerts: 20
+
+  # - name: buzz-email
+  #   email_configs:
+  #     - to: "ops@bongohive.co.zm"            # TBD
+  #       from: "buzz-alerts@bongohive.co.zm"  # TBD
+  #       smarthost: "smtp.example:587"        # TBD; must be on the egress allow-list
+  #       auth_username: "buzz-alerts"
+  #       auth_password_file: /run/secrets/alertmanager_smtp_password
+  #
+  # - name: buzz-compliance-slack
+  #   slack_configs:
+  #     - api_url_file: /run/secrets/alertmanager_slack_url  # TBD
+  #       channel: "#buzz-alerts"
+  #       send_resolved: true

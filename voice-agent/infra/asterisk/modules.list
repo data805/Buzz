@@ -1,0 +1,110 @@
+# Modules compiled into the Buzz Asterisk image (menuselect --enable).
+# Every other module category is disabled first (see Dockerfile).
+# One name per line; comments allowed. Checked by tests/test_static.py.
+
+# Dialplan applications
+app_dial
+app_echo
+app_playback
+app_read
+app_record
+app_stack
+app_stasis
+app_verbose
+
+# Bridges (ARI mixing bridges, Dial bridges)
+bridge_builtin_features
+bridge_builtin_interval_features
+bridge_holding
+bridge_native_rtp
+bridge_simple
+bridge_softmix
+
+# Channel drivers (Local is built into the core)
+chan_bridge_media
+chan_pjsip
+chan_websocket
+
+# Codec and file formats: mu-law only; wav for recorded messages
+codec_ulaw
+format_pcm
+format_wav
+
+# Dialplan functions
+func_callerid
+func_channel
+func_curl
+func_cut
+func_dialplan
+func_env
+func_groupcount
+func_hangupcause
+func_logic
+func_pjsip_endpoint
+func_strings
+func_uri
+
+# Dialplan loader
+pbx_config
+
+# ARI and Stasis
+res_ari
+res_ari_applications
+res_ari_asterisk
+res_ari_bridges
+res_ari_channels
+res_ari_device_states
+res_ari_endpoints
+res_ari_events
+res_ari_model
+res_ari_playbacks
+res_ari_recordings
+res_ari_sounds
+res_stasis
+res_stasis_answer
+res_stasis_device_state
+res_stasis_playback
+res_stasis_recording
+res_stasis_snoop
+
+# WebSocket (ARI events, chan_websocket media)
+res_http_websocket
+res_websocket_client
+
+# PJSIP
+res_pjproject
+res_pjsip
+res_pjsip_acl
+res_pjsip_authenticator_digest
+res_pjsip_caller_id
+res_pjsip_diversion
+res_pjsip_dtmf_info
+res_pjsip_empty_info
+res_pjsip_endpoint_identifier_ip
+res_pjsip_endpoint_identifier_user
+res_pjsip_header_funcs
+res_pjsip_history
+res_pjsip_logger
+res_pjsip_nat
+res_pjsip_outbound_authenticator_digest
+res_pjsip_outbound_registration
+res_pjsip_pubsub
+res_pjsip_registrar
+res_pjsip_rfc3326
+res_pjsip_sdp_rtp
+res_pjsip_session
+res_sorcery_astdb
+res_sorcery_config
+res_sorcery_memory
+res_sorcery_memory_cache
+
+# Media, HTTP clients, metrics, timing, ops
+res_clioriginate
+res_curl
+res_prometheus
+res_rtp_asterisk
+res_security_log
+res_timing_timerfd
+
+# Sound package: core prompts (beep etc.), English, mu-law
+CORE-SOUNDS-EN-ULAW

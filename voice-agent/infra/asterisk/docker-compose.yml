@@ -1,0 +1,61 @@
+# Buzz Asterisk (app host). Run from infra/asterisk/:
+#   cp .env.example .env && edit
+#   mkdir -p local && cp local.example/* local/ && edit
+#   docker compose up -d --build
+#
+# Start the app stack first: Asterisk's ARI binds to 172.30.0.1, the buzz-app
+# bridge gateway, which only exists once that network is up (INTERFACES.md).
+# The entrypoint waits up to 120 s for it, then exits so Docker restarts it.
+
+name: buzz-asterisk
+
+services:
+  asterisk:
+    build:
+      context: .
+      args:
+        ASTERISK_UID: "2000"
+        ASTERISK_GID: "2000"
+    image: buzz/asterisk:22.11.0-buzz1
+    container_name: buzz-asterisk
+    # Host networking: SIP plus 10,000 RTP ports, and loopback access to Dograh
+    # (127.0.0.1:8000) and the suppression service (127.0.0.1:8090).
+    network_mode: host
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Templates and operator files are read-only; rendered config lives in the container.
+      - ./config:/opt/buzz/asterisk/templates:ro
+      - ./local:/opt/buzz/asterisk/local:ro
+      # Disclosure and transfer prompts (sounds/README.md)
+      - ./sounds/buzz:/var/lib/asterisk/sounds/buzz:ro
+      - asterisk-db:/var/lib/asterisk-db
+      # Includes buzz-messages/ (take-a-message recordings: personal data, 90-day retention)
+      - asterisk-spool:/var/spool/asterisk
+      - asterisk-logs:/var/log/asterisk
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      core: 0
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  asterisk-db:
+  asterisk-spool:
+  asterisk-logs:

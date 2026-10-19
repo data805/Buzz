@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://buzz.bongohive.co.zm/schemas/dograh-webhook.v1.json",
+  "title": "Dograh v1.49.0 end-of-call webhook body (Buzz payload template)",
+  "description": "Dograh has no fixed webhook body: it renders the webhook node's payload_template (dograh-payload-template.json) with {{...}} substitution and adds top-level call_disposition if absent (api/tasks/run_integrations.py:426-443). Every substituted value becomes a STRING: null -> \"\", dict/list -> JSON-encoded string, bool -> \"True\"/\"False\" (api/utils/template_renderer.py:248-253). Literal non-string template values (here only `schema`) pass through unchanged. Sent as POST application/json with headers X-Dograh-Delivery-Id (UUID, dedupe key), X-Dograh-Workflow-Run-Id, X-Dograh-Delivery-Attempt, plus the configured credential header (api/tasks/webhook_delivery.py:185-211). At-least-once delivery, up to 5 attempts (api/constants.py:225-230).",
+  "type": "object",
+  "required": [
+    "schema",
+    "workflow_run_id",
+    "workflow_id",
+    "workflow_name",
+    "campaign_id",
+    "call_time",
+    "direction",
+    "caller_number",
+    "called_number",
+    "hubspot_contact_id",
+    "call_status",
+    "call_disposition",
+    "mapped_call_disposition",
+    "call_tags",
+    "summary",
+    "opt_out_requested",
+    "duration_seconds",
+    "transcript_url"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "intString": { "type": "string", "pattern": "^[0-9]+$" },
+    "optIntString": { "type": "string", "pattern": "^[0-9]*$" },
+    "optText": { "type": "string", "maxLength": 20000 }
+  },
+  "properties": {
+    "schema": { "const": "buzz.dograh-webhook.v1" },
+    "workflow_run_id": { "$ref": "#/$defs/intString", "description": "workflow_run.id" },
+    "workflow_id": { "$ref": "#/$defs/intString" },
+    "workflow_name": { "$ref": "#/$defs/optText" },
+    "campaign_id": { "$ref": "#/$defs/optIntString", "description": "\"\" when not a campaign call" },
+    "call_time": {
+      "type": "string",
+      "description": "workflow_run.created_at.isoformat() (run creation, not call end), e.g. 2026-10-19T10:00:00.123456+00:00",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?([+-][0-9]{2}:[0-9]{2}|Z)?$"
+    },
+    "direction": { "enum": ["inbound", "outbound", ""], "description": "initial_context.direction; \"\" for API-triggered runs that do not set it" },
+    "caller_number": { "type": "string", "maxLength": 64 },
+    "called_number": { "type": "string", "maxLength": 64 },
+    "hubspot_contact_id": { "type": "string", "maxLength": 64, "description": "Passed in initial_context by the n8n trigger flow; \"\" for inbound calls" },
+    "call_status": { "type": "string", "maxLength": 64, "description": "How the call ended, e.g. user_hangup, end_call, voicemail_detected, or telephony status failed/busy/no-answer/canceled/error" },
+    "call_disposition": { "type": "string", "maxLength": 64, "description": "Raw disposition. Free string, no closed enum in Dograh" },
+    "mapped_call_disposition": { "type": "string", "maxLength": 64 },
+    "call_tags": {
+      "type": "string",
+      "description": "JSON-encoded list of strings (json.dumps), or \"\" when absent",
+      "pattern": "^(|\\[.*\\])$"
+    },
+    "summary": { "$ref": "#/$defs/optText", "description": "Extraction variable call_summary defined on every Buzz agent. NOT yet redacted" },
+    "opt_out_requested": { "enum": ["True", "False", ""], "description": "Extraction variable (boolean) rendered with Python str(). A hint only: the suppression service is the source of truth" },
+    "duration_seconds": { "$ref": "#/$defs/optIntString", "description": "cost_info.call_duration_seconds" },
+    "transcript_url": {
+      "type": "string",
+      "description": "{BACKEND_API_ENDPOINT}/api/v1/public/download/workflow/{token}/transcript, which 302-redirects to a signed MinIO URL valid for 1 hour. Body is plain text, one line per turn: '[<ISO time>] user: ...' / '[<ISO time>] assistant: ...'. \"\" if there is no transcript",
+      "pattern": "^(|https?://\\S+/api/v1/public/download/workflow/[0-9a-fA-F-]+/transcript)$"
+    }
+  }
+}

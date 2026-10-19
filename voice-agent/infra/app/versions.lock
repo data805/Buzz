@@ -1,0 +1,12 @@
+# Pinned images for the app host. Fill in the digest at deploy with:
+#   docker image inspect --format '{{index .RepoDigests 0}}' <image>
+# (buzz/* images are local: record the image ID from `docker image inspect --format '{{.Id}}'`.)
+# image                                   digest / image ID
+pgvector/pgvector:0.8.7-pg17-bookworm     TBD
+redis:7.4.11-alpine                       TBD
+dograhai/minio:2026.09.22                 TBD
+dograhai/dograh-api:1.49.0                TBD
+buzz/dograh-ui:1.49.0-buzz1               TBD  # from dograh-v1.49.0 = b86e8edddf4e4c9ba174792b5ceaba40c394a9bb
+coturn/coturn:4.8.0                       TBD
+nginx:1.30.5-alpine                       TBD
+buzz/suppression-service:local           TBD

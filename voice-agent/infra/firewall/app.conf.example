@@ -1,0 +1,61 @@
+# Buzz firewall allow-lists: APP host. Copy to /etc/buzz/firewall.conf
+# (root-owned, mode 600) and fill in. Sourced by docker-user-egress.sh as bash.
+# Lists are space-separated. Addresses are IPv4 CIDRs (a bare IP means /32).
+# Ports and hosts follow docs/INTERFACES.md.
+
+ROLE=app
+
+# --- Who may administer the host --------------------------------------------
+# SSH sources. Required when INPUT_POLICY=drop (otherwise you are locked out).
+ADMIN_CIDRS="10.0.0.0/24"
+ADMIN_CIDRS6=""
+SSH_PORT=22
+
+# --- Private network ---------------------------------------------------------
+# Destinations containers and the host may reach freely: the office LAN with
+# the inference server (vLLM 8000, Speaches 8001), Langfuse, n8n if internal.
+# Narrow this to single hosts if you can, e.g. "10.0.0.21/32 10.0.0.30/32".
+LAN_CIDRS="10.0.0.0/24"
+# Internal DNS resolver(s). Docker's embedded DNS forwards to these.
+DNS_SERVERS="10.0.0.2"
+# Internal NTP server(s) (host only).
+NTP_SERVERS=""
+# Docker networks on this host: buzz-app and the default bridge.
+DOCKER_SUBNETS="172.30.0.0/24 172.17.0.0/16"
+
+# --- SIP trunk (Asterisk, host network) ------------------------------------
+# Carrier signalling and media addresses. Inbound SIP 5060/udp, 5060-5061/tcp
+# and RTP 10000-20000/udp are accepted only from these; outbound host traffic
+# to them is allowed.
+SIP_CARRIER_IPS=""
+
+# --- Inbound to Docker-published ports (these bypass ufw) -------------------
+# proto:port[-port]:source-cidr. Anything else arriving for a container is
+# dropped. 0.0.0.0/0 = anyone; use the LAN range if the domain is internal (Q2).
+PUBLISHED_ALLOW="tcp:443:0.0.0.0/0 tcp:80:0.0.0.0/0 udp:3478:0.0.0.0/0 tcp:3478:0.0.0.0/0 udp:49152-49200:0.0.0.0/0"
+
+# --- Inbound to host services ------------------------------------------------
+# proto:port[-port]:source-cidr.
+#   8088  Asterisk ARI on 172.30.0.1, from the Dograh api container only
+#   9100  node-exporter (bound to 172.30.0.1), from Prometheus on buzz-app
+#   3478/49152-49200  TURN hairpin from the api container through docker-proxy (verify)
+HOST_INPUT_ALLOW="tcp:8088:172.30.0.0/24 tcp:9100:172.30.0.0/24 udp:3478:172.30.0.0/24 tcp:3478:172.30.0.0/24 udp:49152-49200:172.30.0.0/24"
+# drop: default-deny inbound. return: fall through to ufw/existing rules.
+INPUT_POLICY=drop
+
+# --- Egress -----------------------------------------------------------------
+# Extra container egress beyond LAN/DNS: "cidr" or "cidr:proto:port".
+# If SERVER_IP is a public address that is not on this host (1:1 NAT), the
+# api reaches coturn through it: add "<SERVER_IP>/32:udp:3478" and
+# "<SERVER_IP>/32:udp:49152-49200" (verify in Phase 2 Test Audio).
+EGRESS_ALLOW=""
+# deny: host egress allow-list too (Asterisk is on the host network).
+HOST_EGRESS_POLICY=deny
+HOST_EGRESS_ALLOW=""
+# yes only if Q2 chooses Let's Encrypt. Resolved at --apply time.
+ALLOW_LETSENCRYPT=no
+LETSENCRYPT_HOSTS="acme-v02.api.letsencrypt.org"
+
+# drop: no IPv6 except loopback, ICMPv6 and SSH from ADMIN_CIDRS6.
+IPV6_POLICY=drop
+LOG_DROPS=yes

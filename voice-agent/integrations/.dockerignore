@@ -1,0 +1,8 @@
+# Build context for suppression-service/Dockerfile is integrations/.
+# Only the two Python packages and requirements.txt are needed.
+**
+!suppression-service/requirements.txt
+!suppression-service/suppression/**
+!redaction/buzz_redaction/**
+**/__pycache__
+**/*.pyc
