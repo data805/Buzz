@@ -232,7 +232,7 @@ These are set in **Settings → Model configurations** (API: `/api/v1/model-conn
 
 ## 9. Open questions (blocking items marked ●)
 
-1. ● **Server details.** For both servers: host/IP, SSH access, OS version, and the **GPU model and VRAM**. Needed to start the read-only inspection and finish section 4.
+1. **Server details (updated).** No local servers exist yet. Phases 0-6 are tested on **temporary cloud VMs** (inference: 24 GB GPU, Ubuntu 22.04/24.04; app: 4 vCPU / 8 GB, public IP), or one GPU VM for both early on. Synthetic data only. Migration to local servers later means changing `INFERENCE_HOST`, `APP_LAN_IP`, `SERVER_IP` and the `.env` files. Still needed from the user: cloud host/IP and SSH access once the VMs exist; real server details before go-live.
 2. **Domain.** Is `voice.bongohive.co.zm` the internal domain? Is it internal-only, or does it need public DNS for the web widget and TLS (Let's Encrypt)?
 3. **Approval of deviations D2 to D5** (section 10).
 4. **SIP trunk provider.** Do they support restricting international calls and premium numbers on their side? Credentials can come later.
@@ -291,4 +291,3 @@ The base code for Phases 1 to 5 was written against the Dograh v1.49.0 source an
 11. Who holds the two offline backup decryption keys?
 12. Do we anonymise or delete call records after 90 days (DPIA)?
 13. Which test caller numbers can we reserve for staging?
-

@@ -5,7 +5,7 @@
 | File | What it is |
 |---|---|
 | `global_prompt.md` | Source of truth for the Global node prompt (persona, hard rules, facts). |
-| `knowledge_base.md` | Placeholder knowledge block (hours, programmes, plans, events). It gets appended to the Global prompt once it's filled. |
+| `knowledge_base.md` | Knowledge block, filled from bongohive.co.zm on 21 Oct 2026; run `build_prompt.py` after editing it. Original note: placeholder knowledge block (hours, programmes, plans, events). It gets appended to the Global prompt once it's filled. |
 | `tools/opt_out.json` | HTTP tool: `POST http://suppression:8080/v1/opt-out`, authenticated with `X-API-Key`. |
 | `tools/transfer_to_staff.json` | Transfer tool to `Local/2000@buzz-transfer/n`, the reception ring group (PLAN D5). Timeout 60 s, as `infra/asterisk/README.md` requires. |
 | `tools/end_call.json` | End-call tool, with a reason. |

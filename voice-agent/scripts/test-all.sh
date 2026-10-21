@@ -14,21 +14,25 @@ suites=(
   tests/egress
   tests/bench
   infra/asterisk
+  tests/inspection
 )
 
 failed=()
 for s in "${suites[@]}"; do
   echo "== ${s}"
-  if ! (cd "${s}" && python -m pytest -q -p no:cacheprovider); then
+  if ! (cd "${s}" && "${PYTHON:-python3}" -m pytest -q -p no:cacheprovider); then
     failed+=("${s}")
   fi
 done
 
 echo "== workflow lint"
-python tests/lint/lint_workflows.py --strict || failed+=("workflow lint")
+"${PYTHON:-python3}" tests/lint/lint_workflows.py --strict || failed+=("workflow lint")
+
+echo "== front-desk prompt in sync"
+"${PYTHON:-python3}" agents/front-desk/build_prompt.py --check || failed+=("prompt sync")
 
 echo "== scenario files"
-python tests/scenarios/validate_scenarios.py tests/scenarios/*.yaml || failed+=("scenario files")
+"${PYTHON:-python3}" tests/scenarios/validate_scenarios.py tests/scenarios/*.yaml || failed+=("scenario files")
 
 if ((${#failed[@]})); then
   echo "FAILED: ${failed[*]}" >&2

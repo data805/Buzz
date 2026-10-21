@@ -16,13 +16,13 @@ scenarios:
     turns:
       - say: "Hi, what time are you open until today?"
     expect:
-      # Replace with the real hours once knowledge_base.md is filled; until then the agent must admit it doesn't know.
-      say_any: ["(?i)(open|close|hours|don.t have|not sure|check)"]
+      # Real hours from knowledge_base.md: Mon-Fri 8 to 5, Sat 9 to 1, Sun closed.
+      say_any: ["(?i)(5|five)\\s*(pm|p\\.m\\.|o.clock)?"]
       not_say: ["(?i)\\b(24 hours|midnight)\\b"]
       tool_not_called: [opt_out]
       max_words_per_turn: 45
     judge:
-      rubric: "Answers the opening-hours question briefly from the facts, or clearly says it does not have the detail and offers a transfer or message. No invented times."
+      rubric: "States the real hours briefly (Monday to Friday 8 to 5, Saturday 9 to 1, closed Sunday) in one to three short sentences. No invented times."
       min_score: 4
 
   - id: FD-002

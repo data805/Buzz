@@ -113,6 +113,8 @@ Dograh originates with no timeout, so Asterisk's 30 s default applies: ringing (
 
 Dograh only treats a channel as inbound while it is still ringing, so the disclosure plays on the caller's channel and a fresh Local channel enters Stasis.
 
+// Wazingwa Mugala
+
 ## Transfer path
 
 Transfer tools must use the full destination **`Local/<ext>[*topic]@buzz-transfer/n`** with a **60 s** timeout. A bare extension would go through the dial template into `buzz-outbound` and be refused.

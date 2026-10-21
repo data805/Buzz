@@ -21,6 +21,9 @@ All notable changes to the Buzz voice-agent platform. British English throughout
 - `tests`: workflow linter, 18 front-desk scenarios and validator, packet-capture egress analyser, latency benchmark. `scripts/test-all.sh` runs every offline suite (428 tests).
 - `infra/monitoring`: Prometheus, Alertmanager, Grafana (no outbound calls) and blackbox exporter; 30 alert and recording rules with promtool tests; "Buzz overview" dashboard in AI Lab colours.
 - `infra/backup`: nightly age-encrypted backups with restore drill, and the 90-day retention job.
+- `scripts/inspect-server.sh` (read-only server inspection, PLAN section 11) and `scripts/check_inspection.py` (verdict on GPU preset, driver, disk, free ports, Docker), with 4 tests in `tests/inspection`; output goes in `docs/inspection/`.
+- `demo/server.py`: runnable browser demo (type or talk) using the front-desk prompt, with an OpenAI-compatible model backend and a scripted offline fallback.
+- `agents/front-desk/build_prompt.py`: builds the Global prompt from `global_prompt.md` plus `knowledge_base.md` into `workflow.json` (`--check` in `scripts/test-all.sh`). The knowledge block is now filled from bongohive.co.zm (21 Oct 2026).
 - GitHub Actions CI; `docs/INTERFACES.md`; `docs/TESTING.md`.
 
 ### Changed
