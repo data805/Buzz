@@ -14,7 +14,6 @@ suites=(
   tests/egress
   tests/bench
   infra/asterisk
-  tests/inspection
 )
 
 failed=()

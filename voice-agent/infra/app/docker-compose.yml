@@ -322,7 +322,8 @@ services:
     <<: *hardening
     # Written in integrations/suppression-service (see INTERFACES.md).
     build:
-      context: ../../integrations/suppression-service
+      context: ../../integrations
+      dockerfile: suppression-service/Dockerfile
     image: buzz/suppression-service:local
     environment:
       SUPPRESSION_API_KEY: "${SUPPRESSION_API_KEY:?set SUPPRESSION_API_KEY in .env}"

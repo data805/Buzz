@@ -120,6 +120,8 @@ class Settings:
     admin_email: str | None = None
     admin_password: str | None = field(default=None, repr=False)
     api_key: str | None = field(default=None, repr=False)
+    llm_port: int = 8000
+    speaches_port: int = 8001
     llm_model: str = "buzz-llm"
     llm_temperature: float = 0.3
     stt_model: str = "deepdml/faster-whisper-large-v3-turbo-ct2"
@@ -140,11 +142,11 @@ class Settings:
 
     @property
     def llm_base_url(self) -> str:
-        return f"http://{self.inference_host}:8000/v1"
+        return f"http://{self.inference_host}:{self.llm_port}/v1"
 
     @property
     def speaches_base_url(self) -> str:
-        return f"http://{self.inference_host}:8001/v1"
+        return f"http://{self.inference_host}:{self.speaches_port}/v1"
 
     def secrets(self) -> list[str]:
         return [
@@ -182,6 +184,8 @@ class Settings:
         settings = cls(
             api_url=opt("DOGRAH_API_URL", "http://127.0.0.1:8000").rstrip("/"),
             inference_host=host,
+            llm_port=int(opt("INFERENCE_LLM_PORT", "8000")),
+            speaches_port=int(opt("INFERENCE_SPEACHES_PORT", "8001")),
             vllm_api_key=req("VLLM_API_KEY"),
             speaches_api_key=req("SPEACHES_API_KEY"),
             admin_email=email,

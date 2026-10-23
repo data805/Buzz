@@ -1,0 +1,232 @@
+# Buzz on one Apple-silicon Mac: the whole platform minus telephony, no cloud.
+#
+# Same Dograh settings as infra/app (telemetry off, Dograh cloud blackholed,
+# data services unpublished), with three differences for a laptop:
+#   - the LLM is Ollama on the host (Metal GPU), not vLLM; Speaches runs on CPU
+#     with small speech models;
+#   - no nginx/TLS: browsers treat http://localhost as a secure origin, so the
+#     microphone works;
+#   - no Asterisk or SIP trunk (a laptop has no carrier). Calls come from the
+#     browser (Test Audio / web widget) through the same Dograh pipeline.
+#
+#   ./scripts/up.sh      # first run: secrets, UI build, start, configure
+name: buzz-local
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  postgres:
+    <<: *hardening
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?run scripts/up.sh}"
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [buzz-local]
+
+  redis:
+    <<: *hardening
+    image: redis:7.4.11-alpine
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?}"
+      REDISCLI_AUTH: "${REDIS_PASSWORD:?}"
+    command: ["sh", "-c", 'exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes']
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [buzz-local]
+
+  minio:
+    <<: *hardening
+    image: dograhai/minio:2026.09.22
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?}"
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:3010"
+      MINIO_BROWSER: "off"
+      MINIO_CALLHOME_ENABLE: "off"
+      MINIO_UPDATE: "off"
+    volumes: [minio_data:/data]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      # The browser plays recordings from here; loopback only.
+      - "127.0.0.1:9000:9000"
+    networks: [buzz-local]
+
+  api:
+    <<: *hardening
+    image: dograhai/dograh-api:1.49.0
+    environment:
+      ENVIRONMENT: local
+      DEPLOYMENT_MODE: oss
+      LOG_LEVEL: INFO
+      ENABLE_TELEMETRY: "false"
+      POSTHOG_API_KEY: ""
+      POSTHOG_HOST: "http://127.0.0.1:9"
+      SENTRY_DSN: ""
+      MPS_API_URL: "http://127.0.0.1:9"
+      DOGRAH_MPS_SECRET_KEY: ""
+      TUNER_BASE_URL: "http://127.0.0.1:9"
+      HF_HUB_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      DO_NOT_TRACK: "1"
+      AUTH_PROVIDER: local
+      OSS_JWT_SECRET: "${OSS_JWT_SECRET:?}"
+      ENABLE_SIGNUP: "true"
+      PUBLIC_BASE_URL: "http://localhost:3010"
+      PUBLIC_HOST: "localhost"
+      BACKEND_API_ENDPOINT: "http://localhost:8000"
+      UI_APP_URL: "http://localhost:3010"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3010"
+      DATABASE_URL: "postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?}@postgres:5432/postgres"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?}@redis:6379"
+      ENABLE_AWS_S3: "false"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_PUBLIC_ENDPOINT: "http://localhost:9000"
+      MINIO_ACCESS_KEY: "${MINIO_ROOT_USER:?}"
+      MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD:?}"
+      MINIO_BUCKET: voice-audio
+      MINIO_SECURE: "false"
+      ENABLE_CALL_RECORDING_UPLOAD: "true"
+      FASTAPI_WORKERS: "1"
+      ENABLE_ARI_MANAGER: "false"
+      ENABLE_CAMPAIGN_ORCHESTRATOR: "false"
+      TELEPHONY_WS_TOKEN_SECRET: "${TELEPHONY_WS_TOKEN_SECRET:?}"
+      TELEPHONY_WS_TOKEN_ENFORCE: "true"
+      ENABLE_COTURN: "true"
+      TURN_SECRET: "${TURN_SECRET:?}"
+      # *.localhost resolves to this Mac in the browser; the alias below makes it
+      # resolve to coturn inside Docker, so the api can allocate a relay.
+      TURN_HOST: "turn.localhost"
+      FORCE_TURN_RELAY: "true"
+      SERVER_IP: "127.0.0.1"
+      ENABLE_PROMETHEUS_METRICS: "false"
+      DOGRAH_DEVOPS_SECRET: "${DOGRAH_DEVOPS_SECRET:?}"
+    volumes:
+      # Raises the TTS wait from 3 s to 30 s (see the comment in the file).
+      - ./patches/service_factory.py:/app/api/services/pipecat/service_factory.py:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", 'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/api/v1/health'').read()"']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks: [buzz-local]
+
+  ui:
+    <<: *hardening
+    # Official prebuilt image. Browser traffic is confined to localhost by the
+    # "web" service below (CSP). To use the branded source build instead, set
+    # UI_IMAGE=buzz/dograh-ui:1.49.0-buzz1 after running infra/app/ui-build/build-ui.sh.
+    image: "${UI_IMAGE:-dograhai/dograh-ui:1.49.0}"
+    environment:
+      HOSTNAME: "0.0.0.0"
+      BACKEND_URL: "http://api:8000"
+      NODE_ENV: oss
+      ENABLE_TELEMETRY: "false"
+      POSTHOG_KEY: ""
+      SENTRY_DSN: ""
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      api: {condition: service_healthy}
+    networks: [buzz-local]
+
+  web:
+    <<: *hardening
+    image: nginx:1.30.5-alpine
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [ui]
+    ports:
+      - "127.0.0.1:3010:3010"
+    networks: [buzz-local]
+
+  coturn:
+    <<: *hardening
+    image: coturn/coturn:4.8.0
+    entrypoint: ["/bin/sh", "/etc/buzz-coturn/render-and-run.sh"]
+    environment:
+      TURN_SECRET: "${TURN_SECRET:?}"
+      TURN_EXTERNAL_IP: "127.0.0.1"
+      TURN_REALM: "localhost"
+    volumes:
+      # Local copy: the relay is mapped 127.0.0.1 <-> 172.28.0.10 (pinned below), so
+      # browser and api, both relaying through this one coturn, can reach each other.
+      - ./coturn:/etc/buzz-coturn:ro
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49152-49200:49152-49200/udp"
+    networks:
+      buzz-local:
+        aliases: [turn.localhost]
+        ipv4_address: 172.28.0.10
+
+  suppression:
+    <<: *hardening
+    build:
+      context: ../../integrations
+      dockerfile: suppression-service/Dockerfile
+    image: buzz/suppression-service:local
+    environment:
+      SUPPRESSION_API_KEY: "${SUPPRESSION_API_KEY:?}"
+      SUPPRESSION_DB_PATH: /var/lib/suppression/suppression.db
+    volumes: [suppression_data:/var/lib/suppression]
+    ports:
+      - "127.0.0.1:8090:8080"
+    networks: [buzz-local]
+
+  speaches:
+    <<: *hardening
+    # CPU image: a Mac has no CUDA. Models are small so calls stay responsive.
+    image: "${SPEACHES_IMAGE:-ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu}"
+    environment:
+      API_KEY: "${SPEACHES_API_KEY:?}"
+      STT_MODEL_TTL: "-1"
+      TTS_MODEL_TTL: "-1"
+      # A laptop shares its cores with the LLM; fewer threads beats thrashing.
+      OMP_NUM_THREADS: "2"
+    volumes:
+      - hf_cache_speaches:/home/ubuntu/.cache/huggingface/hub
+    ports:
+      - "127.0.0.1:8001:8000"
+    networks: [buzz-local]
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  suppression_data:
+  hf_cache_speaches:
+
+networks:
+  buzz-local:
+    name: buzz-local
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

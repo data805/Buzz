@@ -21,9 +21,11 @@ All notable changes to the Buzz voice-agent platform. British English throughout
 - `tests`: workflow linter, 18 front-desk scenarios and validator, packet-capture egress analyser, latency benchmark. `scripts/test-all.sh` runs every offline suite (428 tests).
 - `infra/monitoring`: Prometheus, Alertmanager, Grafana (no outbound calls) and blackbox exporter; 30 alert and recording rules with promtool tests; "Buzz overview" dashboard in AI Lab colours.
 - `infra/backup`: nightly age-encrypted backups with restore drill, and the 90-day retention job.
-- `scripts/inspect-server.sh` (read-only server inspection, PLAN section 11) and `scripts/check_inspection.py` (verdict on GPU preset, driver, disk, free ports, Docker), with 4 tests in `tests/inspection`; output goes in `docs/inspection/`.
-- `demo/server.py`: runnable browser demo (type or talk) using the front-desk prompt, with an OpenAI-compatible model backend and a scripted offline fallback.
 - `agents/front-desk/build_prompt.py`: builds the Global prompt from `global_prompt.md` plus `knowledge_base.md` into `workflow.json` (`--check` in `scripts/test-all.sh`). The knowledge block is now filled from bongohive.co.zm (21 Oct 2026).
+- `infra/local`: one-Mac stack (Ollama on Metal, Speaches on CPU, no telephony, browser calls on localhost) with `scripts/up.sh` for secrets, model alias, containers, speech models and provider setup. Browser calls relay through coturn via the `turn.localhost` alias; `tools/dograh/import_workflow.py` adds agents without Dograh's cloud.
+- `infra/local` tuned for a 16 GB Mac: Qwen2.5 3B at 8k context kept resident, Whisper base.en and a Piper voice (Kokoro took 18 s per sentence on CPU), Speaches limited to 2 threads, Docker VM at 5 GB, and a speech-model warm-up in `up.sh`. Verified with scripted browser-style calls (greeting, speech recognition, knowledge answer, spoken reply).
+- Local api patch raising the TTS wait from 3 s to 30 s, so slow Piper sentences are delayed rather than dropped ("TTS context completed with no audio").
+- Fixed the local suppression service crash-looping (database path now matches the image's writable directory).
 - GitHub Actions CI; `docs/INTERFACES.md`; `docs/TESTING.md`.
 
 ### Changed
